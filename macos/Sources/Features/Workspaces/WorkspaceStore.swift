@@ -2,15 +2,27 @@
 import AppKit
 import Combine
 
+private struct GitBranchCacheEntry {
+    let branch: String
+    let createdAt: Date
+}
+
 @MainActor
 final class WorkspaceStore: ObservableObject {
     static let shared = WorkspaceStore()
 
     @Published private(set) var groups: [UUID: WorkspaceGroup] = [:]
     @Published private(set) var renameRequest: WorkspaceRenameRequest?
+    @Published private(set) var metadataRevision: Int = 0
 
     private var controllersByTabWindowID: [UUID: Weak<TerminalController>] = [:]
+    private var controllerCancellables: [UUID: Set<AnyCancellable>] = [:]
+    private var surfacePwdCancellables: [UUID: Set<AnyCancellable>] = [:]
+    private var gitBranchCache: [String: GitBranchCacheEntry] = [:]
+    private var gitBranchLookupsInFlight: Set<String> = []
     private var frameSyncInProgress = false
+
+    private let gitBranchCacheLifetime: TimeInterval = 5
 
     private init() {}
 
@@ -44,6 +56,7 @@ final class WorkspaceStore: ObservableObject {
         let workspaceID = ensureWorkspace(controller.workspaceID, in: groupID)
         controller.workspaceID = workspaceID
         controllersByTabWindowID[controller.workspaceTabID] = Weak(controller)
+        setupControllerSubscriptions(for: controller)
 
         guard var group = groups[groupID],
               let workspaceIndex = group.workspaces.firstIndex(where: { $0.id == workspaceID })
@@ -62,6 +75,8 @@ final class WorkspaceStore: ObservableObject {
 
     func unregister(_ controller: TerminalController) {
         controllersByTabWindowID[controller.workspaceTabID] = nil
+        controllerCancellables[controller.workspaceTabID] = nil
+        surfacePwdCancellables[controller.workspaceTabID] = nil
 
         guard var group = groups[controller.workspaceGroupID] else { return }
         for workspaceIndex in group.workspaces.indices {
@@ -141,6 +156,20 @@ final class WorkspaceStore: ObservableObject {
         groups[groupID]?.activeWorkspaceID
     }
 
+    func workspaceSubtitle(in groupID: UUID, workspaceID: UUID) -> String? {
+        guard let pwd = sharedPWD(in: groupID, workspaceID: workspaceID) else { return nil }
+
+        scheduleGitBranchLookupIfNeeded(for: pwd)
+
+        let folderName = URL(fileURLWithPath: pwd).lastPathComponent
+        let displayFolderName = folderName.isEmpty ? pwd : folderName
+        guard let branch = gitBranchCache[pwd]?.branch, !branch.isEmpty else {
+            return displayFolderName
+        }
+
+        return "\(displayFolderName) · \(branch)"
+    }
+
     func controllers(in groupID: UUID) -> [TerminalController] {
         guard let group = groups[groupID] else { return [] }
         return group.workspaces.flatMap { workspace in
@@ -188,6 +217,95 @@ final class WorkspaceStore: ObservableObject {
         group.activeWorkspaceID = controller.workspaceID
         group.workspaces[workspaceIndex].activeTabWindowID = controller.workspaceTabID
         groups[controller.workspaceGroupID] = group
+    }
+
+    private func setupControllerSubscriptions(for controller: TerminalController) {
+        var cancellables: Set<AnyCancellable> = []
+        controller.$surfaceTree
+            .sink { [weak self, weak controller] _ in
+                DispatchQueue.main.async {
+                    guard let self, let controller else { return }
+                    self.setupSurfacePwdSubscriptions(for: controller)
+                    self.refreshWorkspaceMetadata()
+                }
+            }
+            .store(in: &cancellables)
+        controllerCancellables[controller.workspaceTabID] = cancellables
+        setupSurfacePwdSubscriptions(for: controller)
+    }
+
+    private func setupSurfacePwdSubscriptions(for controller: TerminalController) {
+        var cancellables: Set<AnyCancellable> = []
+        for surface in controller.surfaceTree {
+            surface.$pwd
+                .sink { [weak self] _ in
+                    DispatchQueue.main.async {
+                        self?.refreshWorkspaceMetadata()
+                    }
+                }
+                .store(in: &cancellables)
+        }
+        surfacePwdCancellables[controller.workspaceTabID] = cancellables
+    }
+
+    private func refreshWorkspaceMetadata() {
+        metadataRevision += 1
+    }
+
+    private func sharedPWD(in groupID: UUID, workspaceID: UUID) -> String? {
+        let surfaces = controllers(in: groupID, workspaceID: workspaceID).flatMap { controller in
+            Array(controller.surfaceTree)
+        }
+        guard !surfaces.isEmpty else { return nil }
+
+        let pwdValues = surfaces.compactMap { surface -> String? in
+            guard let pwd = surface.pwd, !pwd.isEmpty else { return nil }
+            return URL(fileURLWithPath: pwd).standardizedFileURL.path
+        }
+        guard pwdValues.count == surfaces.count else { return nil }
+        guard let firstPWD = pwdValues.first else { return nil }
+        guard pwdValues.allSatisfy({ $0 == firstPWD }) else { return nil }
+        return firstPWD
+    }
+
+    private func scheduleGitBranchLookupIfNeeded(for pwd: String) {
+        if let entry = gitBranchCache[pwd],
+           Date().timeIntervalSince(entry.createdAt) < gitBranchCacheLifetime {
+            return
+        }
+        guard !gitBranchLookupsInFlight.contains(pwd) else { return }
+
+        gitBranchLookupsInFlight.insert(pwd)
+        Task.detached(priority: .utility) {
+            let branch = Self.gitBranch(at: pwd) ?? ""
+            await WorkspaceStore.shared.finishGitBranchLookup(pwd: pwd, branch: branch)
+        }
+    }
+
+    private func finishGitBranchLookup(pwd: String, branch: String) {
+        gitBranchCache[pwd] = GitBranchCacheEntry(branch: branch, createdAt: Date())
+        gitBranchLookupsInFlight.remove(pwd)
+        refreshWorkspaceMetadata()
+    }
+
+    nonisolated private static func gitBranch(at pwd: String) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["git", "-C", pwd, "branch", "--show-current"]
+
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = Pipe()
+
+        guard (try? process.run()) != nil else { return nil }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        let branch = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let branch, !branch.isEmpty else { return nil }
+        return branch
     }
 
     func syncWindowFrame(from source: TerminalController) {

@@ -16,6 +16,17 @@ A file for [guiding coding agents](https://agents.md/).
 - **Formatting (Swift)**: `swiftlint lint --strict --fix`
 - **Formatting (other)**: `prettier -w .`
 
+## Workspaces branch local macOS commands
+
+This branch has local workspaces testing helpers for Ramon's macOS setup:
+
+- **Dev run (Debug):** `./scripts/workspaces-dev-run.sh`
+  - Equivalent to `env DEVELOPER_DIR=/Library/Developer/CommandLineTools zig build run -Dxcframework-target=native`.
+  - Use this for fast iteration; it shows Ghostty's debug/degraded-performance warning.
+- **Install side-by-side app (optimized):** `./scripts/workspaces-install-app.sh`
+  - Builds `ReleaseFast`, copies the app to `/Applications/Ghostty-Workspaces.app`, changes the bundle name/id to `Ghostty Workspaces` / `com.ramonvg.ghostty-workspaces`, ad-hoc signs it, refreshes Launch Services, and opens it.
+  - Use this when testing via Raycast/Dock without replacing `/Applications/Ghostty.app`.
+
 ## libghostty-vt
 
 - Build: `zig build -Demit-lib-vt`

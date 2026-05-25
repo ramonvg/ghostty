@@ -224,7 +224,7 @@ class AppDelegate: NSObject,
         // Setup a local event monitor for app-level keyboard shortcuts. See
         // localEventHandler for more info why.
         _ = NSEvent.addLocalMonitorForEvents(
-            matching: [.keyDown],
+            matching: [.keyDown, .flagsChanged],
             handler: localEventHandler)
 
         // Notifications
@@ -549,9 +549,19 @@ class AppDelegate: NSObject,
         case .keyDown:
             localEventKeyDown(event)
 
+        case .flagsChanged:
+            localEventFlagsChanged(event)
+
         default:
             event
         }
+    }
+
+    private func localEventFlagsChanged(_ event: NSEvent) -> NSEvent? {
+        NotificationCenter.default.post(
+            name: .ghosttyWorkspaceModifierFlagsChanged,
+            object: event.modifierFlags.contains(.control))
+        return event
     }
 
     private func localEventKeyDown(_ event: NSEvent) -> NSEvent? {

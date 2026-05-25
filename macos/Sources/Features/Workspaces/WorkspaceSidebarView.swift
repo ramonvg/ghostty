@@ -18,6 +18,7 @@ struct WorkspaceSidebarView: View {
     @State private var resizeStartWidth: CGFloat?
     @State private var editingWorkspaceID: UUID?
     @State private var renameDraft: String = ""
+    @State private var isControlKeyPressed = false
     @FocusState private var focusedRenameWorkspaceID: UUID?
 
     private var width: CGFloat {
@@ -46,8 +47,9 @@ struct WorkspaceSidebarView: View {
             .padding(.top, 10)
 
             VStack(alignment: .leading, spacing: 3) {
-                ForEach(store.workspaces(in: groupID)) { workspace in
-                    workspaceButton(workspace)
+                let workspaces = store.workspaces(in: groupID)
+                ForEach(Array(workspaces.enumerated()), id: \.element.id) { index, workspace in
+                    workspaceButton(workspace, index: index)
                 }
             }
             .padding(.horizontal, 6)
@@ -66,6 +68,13 @@ struct WorkspaceSidebarView: View {
             }
 
             beginRename(workspace)
+        }
+        .onAppear {
+            isControlKeyPressed = NSEvent.modifierFlags.contains(.control)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .ghosttyWorkspaceModifierFlagsChanged)) { notification in
+            guard let isControlKeyPressed = notification.object as? Bool else { return }
+            self.isControlKeyPressed = isControlKeyPressed
         }
     }
 
@@ -114,18 +123,18 @@ struct WorkspaceSidebarView: View {
     }
 
     @ViewBuilder
-    private func workspaceButton(_ workspace: Workspace) -> some View {
+    private func workspaceButton(_ workspace: Workspace, index: Int) -> some View {
         let isActive = workspace.id == store.activeWorkspaceID(in: groupID)
 
         if editingWorkspaceID == workspace.id {
-            workspaceRowContent(workspace, isActive: isActive)
+            workspaceRowContent(workspace, index: index, isActive: isActive)
                 .contextMenu { workspaceContextMenu(workspace) }
                 .help(workspace.name)
         } else {
             Button {
                 activateWorkspace(workspace.id)
             } label: {
-                workspaceRowContent(workspace, isActive: isActive)
+                workspaceRowContent(workspace, index: index, isActive: isActive)
             }
             .buttonStyle(.plain)
             .contextMenu { workspaceContextMenu(workspace) }
@@ -133,26 +142,41 @@ struct WorkspaceSidebarView: View {
         }
     }
 
-    private func workspaceRowContent(_ workspace: Workspace, isActive: Bool) -> some View {
+    private func workspaceRowContent(_ workspace: Workspace, index: Int, isActive: Bool) -> some View {
         HStack(spacing: 8) {
-            if editingWorkspaceID == workspace.id {
-                TextField("Workspace name", text: $renameDraft)
-                    .textFieldStyle(.plain)
-                    .focused($focusedRenameWorkspaceID, equals: workspace.id)
-                    .onSubmit { commitRename() }
-                    .onAppear { focusedRenameWorkspaceID = workspace.id }
-            } else {
-                Text(workspace.name)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+            VStack(alignment: .leading, spacing: 1) {
+                if editingWorkspaceID == workspace.id {
+                    TextField("Workspace name", text: $renameDraft)
+                        .textFieldStyle(.plain)
+                        .focused($focusedRenameWorkspaceID, equals: workspace.id)
+                        .onSubmit { commitRename() }
+                        .onAppear { focusedRenameWorkspaceID = workspace.id }
+                } else {
+                    Text(workspace.name)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    if let subtitle = store.workspaceSubtitle(in: groupID, workspaceID: workspace.id) {
+                        Text(subtitle)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
             }
 
             Spacer(minLength: 4)
 
-            if !workspace.tabWindowIDs.isEmpty {
-                Text("\(workspace.tabWindowIDs.count)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+            if isControlKeyPressed, let shortcutLabel = workspaceShortcutLabel(for: index) {
+                Text(shortcutLabel)
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+                    .frame(minWidth: 16, minHeight: 16)
+                    .background {
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(Color.secondary.opacity(isActive ? 0.18 : 0.12))
+                    }
             }
         }
         .font(.system(size: 12))
@@ -177,6 +201,14 @@ struct WorkspaceSidebarView: View {
                 cancelRename()
             }
             closeWorkspace(workspace.id)
+        }
+    }
+
+    private func workspaceShortcutLabel(for index: Int) -> String? {
+        switch index {
+        case 0...8: return "\(index + 1)"
+        case 9: return "0"
+        default: return nil
         }
     }
 
