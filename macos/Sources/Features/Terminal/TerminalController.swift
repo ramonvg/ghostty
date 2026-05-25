@@ -796,24 +796,22 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // otherwise the accessory view doesn't matter.
         tabListenForFrame = window?.tabbedWindows?.count ?? 0 > 1
 
-        if let tabbedWindows = window?.tabbedWindows {
-            WorkspaceStore.shared.syncTabOrder(from: tabbedWindows)
-        }
+        let tabbedWindows = window?.tabGroup?.windows ?? window?.tabbedWindows ?? []
+        WorkspaceStore.shared.syncTabOrder(from: tabbedWindows)
 
-        if let windows = window?.tabbedWindows as? [TerminalWindow] {
-            for (tab, window) in zip(1..., windows) {
-                // We need to clear any windows beyond this because they have had
-                // a keyEquivalent set previously.
-                guard tab <= 9 else {
-                    window.keyEquivalent = ""
-                    continue
-                }
+        let terminalWindows = tabbedWindows.compactMap { $0 as? TerminalWindow }
+        for (tab, window) in zip(1..., terminalWindows) {
+            // We need to clear any windows beyond this because they have had
+            // a keyEquivalent set previously.
+            guard tab <= 9 else {
+                window.keyEquivalent = ""
+                continue
+            }
 
-                if let equiv = ghostty.config.keyboardShortcut(for: "goto_tab:\(tab)") {
-                    window.keyEquivalent = "\(equiv)"
-                } else {
-                    window.keyEquivalent = ""
-                }
+            if let equiv = ghostty.config.keyboardShortcut(for: "goto_tab:\(tab)") {
+                window.keyEquivalent = "\(equiv)"
+            } else {
+                window.keyEquivalent = ""
             }
         }
     }
