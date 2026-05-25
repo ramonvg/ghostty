@@ -152,7 +152,7 @@ struct WorkspaceSidebarView: View {
                         .onSubmit { commitRename() }
                         .onAppear { focusedRenameWorkspaceID = workspace.id }
                 } else {
-                    Text(workspace.name)
+                    Text(workspaceDisplayName(workspace))
                         .lineLimit(1)
                         .truncationMode(.tail)
 
@@ -202,6 +202,14 @@ struct WorkspaceSidebarView: View {
             }
             closeWorkspace(workspace.id)
         }
+    }
+
+    private func workspaceDisplayName(_ workspace: Workspace) -> String {
+        guard let spinner = store.workspaceLoadingSpinner(in: groupID, workspaceID: workspace.id) else {
+            return workspace.name
+        }
+
+        return "\(spinner) \(workspace.name)"
     }
 
     private func workspaceShortcutLabel(for index: Int) -> String? {

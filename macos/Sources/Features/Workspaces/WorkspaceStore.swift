@@ -22,6 +22,10 @@ final class WorkspaceStore: ObservableObject {
     private var gitBranchLookupsInFlight: Set<String> = []
     private var frameSyncInProgress = false
 
+    private static let loadingSpinnerFrames: Set<Character> = [
+        "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
+    ]
+
     private let gitBranchCacheLifetime: TimeInterval = 5
 
     private init() {}
@@ -170,6 +174,44 @@ final class WorkspaceStore: ObservableObject {
         return "\(displayFolderName) · \(branch)"
     }
 
+    func workspaceLoadingSpinner(in groupID: UUID, workspaceID: UUID) -> String? {
+        for controller in controllers(in: groupID, workspaceID: workspaceID) {
+            if let windowTitle = controller.window?.title,
+               let spinner = Self.loadingSpinner(in: windowTitle) {
+                return String(spinner)
+            }
+
+            for surface in controller.surfaceTree {
+                if let spinner = Self.loadingSpinner(in: surface.title) {
+                    return String(spinner)
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private static func loadingSpinner(in title: String) -> Character? {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedTitle.contains("π") else { return nil }
+
+        if let firstCharacter = trimmedTitle.first, loadingSpinnerFrames.contains(firstCharacter) {
+            return firstCharacter
+        }
+
+        let bellPrefix = "🔔"
+        if trimmedTitle.hasPrefix(bellPrefix) {
+            let titleWithoutBell = trimmedTitle
+                .dropFirst(bellPrefix.count)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let firstCharacter = titleWithoutBell.first, loadingSpinnerFrames.contains(firstCharacter) {
+                return firstCharacter
+            }
+        }
+
+        return trimmedTitle.first { loadingSpinnerFrames.contains($0) }
+    }
+
     func controllers(in groupID: UUID) -> [TerminalController] {
         guard let group = groups[groupID] else { return [] }
         return group.workspaces.flatMap { workspace in
@@ -225,19 +267,36 @@ final class WorkspaceStore: ObservableObject {
             .sink { [weak self, weak controller] _ in
                 DispatchQueue.main.async {
                     guard let self, let controller else { return }
-                    self.setupSurfacePwdSubscriptions(for: controller)
+                    self.setupSurfaceMetadataSubscriptions(for: controller)
                     self.refreshWorkspaceMetadata()
                 }
             }
             .store(in: &cancellables)
+
+        controller.window?.publisher(for: \.title)
+            .sink { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.refreshWorkspaceMetadata()
+                }
+            }
+            .store(in: &cancellables)
+
         controllerCancellables[controller.workspaceTabID] = cancellables
-        setupSurfacePwdSubscriptions(for: controller)
+        setupSurfaceMetadataSubscriptions(for: controller)
     }
 
-    private func setupSurfacePwdSubscriptions(for controller: TerminalController) {
+    private func setupSurfaceMetadataSubscriptions(for controller: TerminalController) {
         var cancellables: Set<AnyCancellable> = []
         for surface in controller.surfaceTree {
             surface.$pwd
+                .sink { [weak self] _ in
+                    DispatchQueue.main.async {
+                        self?.refreshWorkspaceMetadata()
+                    }
+                }
+                .store(in: &cancellables)
+
+            surface.$title
                 .sink { [weak self] _ in
                     DispatchQueue.main.async {
                         self?.refreshWorkspaceMetadata()
