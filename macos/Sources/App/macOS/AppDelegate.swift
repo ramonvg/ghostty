@@ -365,6 +365,8 @@ class AppDelegate: NSObject,
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        WorkspaceStore.shared.saveCurrentSession()
+
         let windows = NSApplication.shared.windows
         if windows.isEmpty { return .terminateNow }
 

@@ -1094,6 +1094,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     func closeWindowImmediately() {
         guard let window = window else { return }
 
+        WorkspaceStore.shared.saveCurrentSession()
         cancelPendingInitialPresentation()
 
         let workspaceControllers = WorkspaceStore.shared.controllers(in: workspaceGroupID)
@@ -1605,9 +1606,6 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         super.windowWillClose(notification)
         cancelPendingInitialPresentation()
         self.relabelTabs()
-        if TerminalController.all.count == 1 {
-            WorkspaceStore.shared.saveCurrentSession()
-        }
         WorkspaceStore.shared.unregister(self)
 
         // If we remove a window, we reset the cascade point to the key window so that
