@@ -16,6 +16,44 @@ A file for [guiding coding agents](https://agents.md/).
 - **Formatting (Swift)**: `swiftlint lint --strict --fix`
 - **Formatting (other)**: `prettier -w .`
 
+## Ramon's Ghostty workspaces branch
+
+This checkout is a personal branch of Ghostty for Ramon. It carries a macOS-only
+"workspaces" feature that is not part of upstream Ghostty. Future agents should
+assume workspace behavior is intentionally local to this branch unless Ramon says
+otherwise.
+
+The workspaces feature groups Ghostty terminal windows/tabs into named workspace
+sets. A workspace group owns an ordered list of workspaces, one active workspace,
+and per-workspace terminal controllers. Switching workspaces hides the windows
+from the previous workspace, shows the windows for the target workspace, preserves
+the active tab/window for each workspace, and keeps workspace ordering stable.
+Workspace navigation is positional, not history-based.
+
+Important macOS workspace files:
+
+- `macos/Sources/Features/Workspaces/WorkspaceStore.swift`: central workspace
+  state and activation logic.
+- `macos/Sources/Features/Workspaces/Workspace.swift`: workspace/group models.
+- `macos/Sources/Features/Workspaces/WorkspaceSidebarView.swift`: sidebar UI for
+  selecting, creating, renaming, and closing workspaces.
+- `macos/Sources/Features/Terminal/TerminalController.swift`: terminal commands
+  and keyboard shortcuts for workspace actions.
+- `macos/Sources/App/macOS/AppDelegate.swift`: local key event monitor that routes
+  workspace shortcuts before normal terminal input.
+
+Default macOS workspace shortcuts currently include:
+
+- `Ctrl+N`: create workspace.
+- `Ctrl+W`: close active workspace.
+- `Ctrl+1` ... `Ctrl+0`: activate workspaces 1 ... 10 by position.
+- `Ctrl+Up`: activate the previous workspace by position, wrapping around.
+- `Ctrl+Down`: activate the next workspace by position, wrapping around.
+
+These shortcuts are intentionally enabled by default for Ramon's workflow, even
+if they conflict with macOS Mission Control/Spaces settings. Ramon will adjust
+system shortcuts locally as needed.
+
 ## Workspaces branch local macOS commands
 
 This branch has local workspaces testing helpers for Ramon's macOS setup:

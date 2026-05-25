@@ -598,6 +598,11 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             return true
         }
 
+        if let workspaceNavigationOffset = Self.workspaceNavigationOffset(from: event) {
+            navigateWorkspace(by: workspaceNavigationOffset)
+            return true
+        }
+
         guard let workspaceNumber = Self.workspaceNumber(from: event) else { return false }
         let workspaceIndex = workspaceNumber - 1
         let workspaces = WorkspaceStore.shared.workspaces(in: workspaceGroupID)
@@ -620,6 +625,33 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         let modifiers = event.modifierFlags.intersection([.control, .shift, .option, .command])
         guard modifiers == .control else { return false }
         return event.charactersIgnoringModifiers?.lowercased() == "w" || event.keyCode == 13
+    }
+
+    private func navigateWorkspace(by offset: Int) {
+        let workspaces = WorkspaceStore.shared.workspaces(in: workspaceGroupID)
+        guard workspaces.count > 1,
+              let activeWorkspaceID = WorkspaceStore.shared.activeWorkspaceID(in: workspaceGroupID),
+              let activeWorkspaceIndex = workspaces.firstIndex(where: { $0.id == activeWorkspaceID })
+        else { return }
+
+        let targetWorkspaceIndex = (activeWorkspaceIndex + offset + workspaces.count) % workspaces.count
+        WorkspaceStore.shared.activateWorkspace(
+            workspaces[targetWorkspaceIndex].id,
+            in: workspaceGroupID,
+            from: self)
+    }
+
+    private static func workspaceNavigationOffset(from event: NSEvent) -> Int? {
+        guard event.type == .keyDown else { return nil }
+
+        let modifiers = event.modifierFlags.intersection([.control, .shift, .option, .command])
+        guard modifiers == .control else { return nil }
+
+        switch event.keyCode {
+        case 126: return -1 // Up Arrow
+        case 125: return 1 // Down Arrow
+        default: return nil
+        }
     }
 
     private static func workspaceNumber(from event: NSEvent) -> Int? {

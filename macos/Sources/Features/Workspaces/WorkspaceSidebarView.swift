@@ -205,11 +205,14 @@ struct WorkspaceSidebarView: View {
     }
 
     private func workspaceDisplayName(_ workspace: Workspace) -> String {
-        guard let spinner = store.workspaceLoadingSpinner(in: groupID, workspaceID: workspace.id) else {
+        switch store.workspaceAgentStatus(in: groupID, workspaceID: workspace.id) {
+        case .working(let spinner):
+            return "\(spinner) \(workspace.name)"
+        case .attention:
+            return "🔔 \(workspace.name)"
+        case .none:
             return workspace.name
         }
-
-        return "\(spinner) \(workspace.name)"
     }
 
     private func workspaceShortcutLabel(for index: Int) -> String? {

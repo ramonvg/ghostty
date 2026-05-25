@@ -7,6 +7,12 @@ private struct GitBranchCacheEntry {
     let createdAt: Date
 }
 
+enum WorkspaceAgentStatus: Equatable {
+    case working(Character)
+    case attention
+    case none
+}
+
 @MainActor
 final class WorkspaceStore: ObservableObject {
     static let shared = WorkspaceStore()
@@ -18,6 +24,8 @@ final class WorkspaceStore: ObservableObject {
     private var controllersByTabWindowID: [UUID: Weak<TerminalController>] = [:]
     private var controllerCancellables: [UUID: Set<AnyCancellable>] = [:]
     private var surfacePwdCancellables: [UUID: Set<AnyCancellable>] = [:]
+    private var controllerHadWorkingAgent: Set<UUID> = []
+    private var controllerNeedsAgentAttention: Set<UUID> = []
     private var gitBranchCache: [String: GitBranchCacheEntry] = [:]
     private var gitBranchLookupsInFlight: Set<String> = []
     private var frameSyncInProgress = false
@@ -81,6 +89,8 @@ final class WorkspaceStore: ObservableObject {
         controllersByTabWindowID[controller.workspaceTabID] = nil
         controllerCancellables[controller.workspaceTabID] = nil
         surfacePwdCancellables[controller.workspaceTabID] = nil
+        controllerHadWorkingAgent.remove(controller.workspaceTabID)
+        controllerNeedsAgentAttention.remove(controller.workspaceTabID)
 
         guard var group = groups[controller.workspaceGroupID] else { return }
         for workspaceIndex in group.workspaces.indices {
@@ -174,29 +184,54 @@ final class WorkspaceStore: ObservableObject {
         return "\(displayFolderName) · \(branch)"
     }
 
-    func workspaceLoadingSpinner(in groupID: UUID, workspaceID: UUID) -> String? {
+    func workspaceAgentStatus(in groupID: UUID, workspaceID: UUID) -> WorkspaceAgentStatus {
+        var foundAttention = false
+
         for controller in controllers(in: groupID, workspaceID: workspaceID) {
-            if let windowTitle = controller.window?.title,
-               let spinner = Self.loadingSpinner(in: windowTitle) {
-                return String(spinner)
+            if controllerNeedsAgentAttention.contains(controller.workspaceTabID) {
+                foundAttention = true
+            }
+
+            if controller.bell {
+                foundAttention = true
+            }
+
+            if let windowTitle = controller.window?.title {
+                switch Self.agentStatus(in: windowTitle) {
+                case .working(let spinner):
+                    return .working(spinner)
+                case .attention:
+                    foundAttention = true
+                case .none:
+                    break
+                }
             }
 
             for surface in controller.surfaceTree {
-                if let spinner = Self.loadingSpinner(in: surface.title) {
-                    return String(spinner)
+                if surface.bell {
+                    foundAttention = true
+                }
+
+                switch Self.agentStatus(in: surface.title) {
+                case .working(let spinner):
+                    return .working(spinner)
+                case .attention:
+                    foundAttention = true
+                case .none:
+                    break
                 }
             }
         }
 
-        return nil
+        return foundAttention ? .attention : .none
     }
 
-    private static func loadingSpinner(in title: String) -> Character? {
+    private static func agentStatus(in title: String) -> WorkspaceAgentStatus {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmedTitle.contains("π") else { return nil }
+        guard trimmedTitle.contains("π") else { return .none }
 
         if let firstCharacter = trimmedTitle.first, loadingSpinnerFrames.contains(firstCharacter) {
-            return firstCharacter
+            return .working(firstCharacter)
         }
 
         let bellPrefix = "🔔"
@@ -205,11 +240,19 @@ final class WorkspaceStore: ObservableObject {
                 .dropFirst(bellPrefix.count)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if let firstCharacter = titleWithoutBell.first, loadingSpinnerFrames.contains(firstCharacter) {
-                return firstCharacter
+                return .working(firstCharacter)
             }
         }
 
-        return trimmedTitle.first { loadingSpinnerFrames.contains($0) }
+        if let spinner = trimmedTitle.first(where: { loadingSpinnerFrames.contains($0) }) {
+            return .working(spinner)
+        }
+
+        if trimmedTitle.hasPrefix(bellPrefix) || trimmedTitle.contains("💤") {
+            return .attention
+        }
+
+        return .none
     }
 
     func controllers(in groupID: UUID) -> [TerminalController] {
@@ -281,6 +324,14 @@ final class WorkspaceStore: ObservableObject {
             }
             .store(in: &cancellables)
 
+        controller.$bell
+            .sink { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.refreshWorkspaceMetadata()
+                }
+            }
+            .store(in: &cancellables)
+
         controllerCancellables[controller.workspaceTabID] = cancellables
         setupSurfaceMetadataSubscriptions(for: controller)
     }
@@ -303,12 +354,86 @@ final class WorkspaceStore: ObservableObject {
                     }
                 }
                 .store(in: &cancellables)
+
+            surface.$bell
+                .sink { [weak self] _ in
+                    DispatchQueue.main.async {
+                        self?.refreshWorkspaceMetadata()
+                    }
+                }
+                .store(in: &cancellables)
         }
         surfacePwdCancellables[controller.workspaceTabID] = cancellables
     }
 
     private func refreshWorkspaceMetadata() {
+        updateControllerAgentStates()
         metadataRevision += 1
+    }
+
+    private func updateControllerAgentStates() {
+        for (tabWindowID, weakController) in controllersByTabWindowID {
+            guard let controller = weakController.value else {
+                controllerHadWorkingAgent.remove(tabWindowID)
+                controllerNeedsAgentAttention.remove(tabWindowID)
+                continue
+            }
+
+            let snapshot = agentSnapshot(for: controller)
+            if snapshot.hasWorking {
+                controllerHadWorkingAgent.insert(tabWindowID)
+                controllerNeedsAgentAttention.remove(tabWindowID)
+            } else if snapshot.hasAttention || (controllerHadWorkingAgent.contains(tabWindowID) && snapshot.hasPiTitle) {
+                controllerHadWorkingAgent.remove(tabWindowID)
+                controllerNeedsAgentAttention.insert(tabWindowID)
+            } else if !snapshot.hasPiTitle {
+                controllerHadWorkingAgent.remove(tabWindowID)
+                controllerNeedsAgentAttention.remove(tabWindowID)
+            }
+        }
+    }
+
+    private func agentSnapshot(for controller: TerminalController) -> (
+        hasWorking: Bool,
+        hasAttention: Bool,
+        hasPiTitle: Bool
+    ) {
+        var hasWorking = false
+        var hasAttention = false
+        var hasPiTitle = false
+
+        func record(title: String) {
+            let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmedTitle.contains("π") else { return }
+            hasPiTitle = true
+
+            switch Self.agentStatus(in: trimmedTitle) {
+            case .working:
+                hasWorking = true
+            case .attention:
+                hasAttention = true
+            case .none:
+                break
+            }
+        }
+
+        if let windowTitle = controller.window?.title {
+            record(title: windowTitle)
+        }
+
+        for surface in controller.surfaceTree {
+            record(title: surface.title)
+        }
+
+        if hasPiTitle && controller.bell {
+            hasAttention = true
+        }
+
+        if hasPiTitle && controller.surfaceTree.contains(where: { $0.bell }) {
+            hasAttention = true
+        }
+
+        return (hasWorking, hasAttention, hasPiTitle)
     }
 
     private func sharedPWD(in groupID: UUID, workspaceID: UUID) -> String? {
