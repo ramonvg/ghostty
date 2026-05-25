@@ -58,11 +58,6 @@ class TerminalWindow: NSWindow {
         windowController as? TerminalController
     }
 
-    var workspaceSidebarTitlebarInset: CGFloat {
-        guard terminalController != nil else { return 0 }
-        return WorkspaceSidebarView.storedSidebarWidth()
-    }
-
     /// The color assigned to this window's tab. Setting this updates the tab color indicator
     /// and marks the window's restorable state as dirty.
     var tabColor: TerminalTabColor = .none {

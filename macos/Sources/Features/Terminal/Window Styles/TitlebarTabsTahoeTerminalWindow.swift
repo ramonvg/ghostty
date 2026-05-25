@@ -15,7 +15,6 @@ class TitlebarTabsTahoeTerminalWindow: TransparentTitlebarTerminalWindow, NSTool
 
     deinit {
         tabBarObserver = nil
-        workspaceSidebarWidthObserver = nil
     }
 
     // MARK: NSWindow
@@ -124,15 +123,6 @@ class TitlebarTabsTahoeTerminalWindow: TransparentTitlebarTerminalWindow, NSTool
         }
     }
 
-    private var workspaceSidebarWidthObserver: NSObjectProtocol? {
-        didSet {
-            guard let oldValue else { return }
-            NotificationCenter.default.removeObserver(oldValue)
-        }
-    }
-
-    private var tabBarConstraints: [NSLayoutConstraint] = []
-
     /// Take the NSTabBar that is on the window and convert it into titlebar tabs.
     ///
     /// Let me explain more background on what is happening here. When a tab bar is created, only the
@@ -175,22 +165,20 @@ class TitlebarTabsTahoeTerminalWindow: TransparentTitlebarTerminalWindow, NSTool
         // The container is the view that we'll constrain our tab bar within.
         let container = toolbarView
 
-        // The padding for the tab bar. If the workspace sidebar is visible, it
-        // owns the full left side of the window including the titlebar area.
-        // Keep titlebar tabs constrained to the terminal area to the right of it.
-        let windowButtonsPadding: CGFloat = switch self.derivedConfig.macosWindowButtons {
+        // The padding for the tab bar. If we're showing window buttons then
+        // we need to offset the window buttons.
+        let leftPadding: CGFloat = switch self.derivedConfig.macosWindowButtons {
         case .hidden: 0
         case .visible: 70
         }
-        let leftPadding = max(windowButtonsPadding, workspaceSidebarTitlebarInset)
 
         // Constrain the accessory clip view (the parent of the accessory view
         // usually that clips the children) to the container view.
         clipView.translatesAutoresizingMaskIntoConstraints = false
         accessoryView.translatesAutoresizingMaskIntoConstraints = false
 
-        NSLayoutConstraint.deactivate(tabBarConstraints)
-        tabBarConstraints = [
+        // Setup all our constraints
+        NSLayoutConstraint.activate([
             clipView.leftAnchor.constraint(equalTo: container.leftAnchor, constant: leftPadding),
             clipView.rightAnchor.constraint(equalTo: container.rightAnchor),
             clipView.topAnchor.constraint(equalTo: container.topAnchor, constant: 2),
@@ -199,8 +187,7 @@ class TitlebarTabsTahoeTerminalWindow: TransparentTitlebarTerminalWindow, NSTool
             accessoryView.rightAnchor.constraint(equalTo: clipView.rightAnchor),
             accessoryView.topAnchor.constraint(equalTo: clipView.topAnchor),
             accessoryView.heightAnchor.constraint(equalTo: clipView.heightAnchor),
-        ]
-        NSLayoutConstraint.activate(tabBarConstraints)
+        ])
 
         clipView.needsLayout = true
         accessoryView.needsLayout = true
@@ -209,16 +196,6 @@ class TitlebarTabsTahoeTerminalWindow: TransparentTitlebarTerminalWindow, NSTool
         // other events occur, the tab bar can resize and clear our constraints. When this
         // happens, we need to remove our custom constraints and re-apply them once the
         // tab bar has proper dimensions again to avoid constraint conflicts.
-        workspaceSidebarWidthObserver = NotificationCenter.default.addObserver(
-            forName: .ghosttyWorkspaceSidebarWidthChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            self.tabBarObserver = nil
-            self.setupTabBar()
-        }
-
         tabBarView.postsFrameChangedNotifications = true
         tabBarObserver = NotificationCenter.default.addObserver(
             forName: NSView.frameDidChangeNotification,
@@ -245,10 +222,7 @@ class TitlebarTabsTahoeTerminalWindow: TransparentTitlebarTerminalWindow, NSTool
         }
 
         // Clear our observations
-        NSLayoutConstraint.deactivate(tabBarConstraints)
-        tabBarConstraints = []
         self.tabBarObserver = nil
-        self.workspaceSidebarWidthObserver = nil
     }
 
     // MARK: NSToolbarDelegate

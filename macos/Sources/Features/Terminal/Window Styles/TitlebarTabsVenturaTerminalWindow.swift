@@ -6,19 +6,6 @@ class TitlebarTabsVenturaTerminalWindow: TerminalWindow {
     /// the native tabs back into the menu bar.
     override var supportsUpdateAccessory: Bool { false }
 
-    private var workspaceSidebarWidthObserver: NSObjectProtocol? {
-        didSet {
-            guard let oldValue else { return }
-            NotificationCenter.default.removeObserver(oldValue)
-        }
-    }
-
-    private var tabBarConstraints: [NSLayoutConstraint] = []
-
-    deinit {
-        workspaceSidebarWidthObserver = nil
-    }
-
     /// This is used to determine if certain elements should be drawn light or dark and should
     /// be updated whenever the window background color or surrounding elements changes.
     fileprivate var isLightTheme: Bool = false
@@ -399,10 +386,6 @@ class TitlebarTabsVenturaTerminalWindow: TerminalWindow {
 
     // To be called immediately after the tab bar is disabled.
     private func resetCustomTabBarViews() {
-        NSLayoutConstraint.deactivate(tabBarConstraints)
-        tabBarConstraints = []
-        workspaceSidebarWidthObserver = nil
-
         // Hide the window buttons backdrop.
         windowButtonsBackdrop?.isHidden = true
 
@@ -430,8 +413,6 @@ class TitlebarTabsVenturaTerminalWindow: TerminalWindow {
         // If we don't do this then on launch windows with restored state with tabs will end
         // up with messed up tab bars that don't show all tabs.
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-
             let accessoryView = tabBarController.view
             guard let accessoryClipView = accessoryView.superview else { return }
             guard let titlebarView = accessoryClipView.superview else { return }
@@ -440,43 +421,27 @@ class TitlebarTabsVenturaTerminalWindow: TerminalWindow {
                 $0.className == "NSToolbarView"
             }) else { return }
 
-            addWindowButtonsBackdrop(titlebarView: titlebarView, toolbarView: toolbarView)
-            guard let windowButtonsBackdrop else { return }
+            self?.addWindowButtonsBackdrop(titlebarView: titlebarView, toolbarView: toolbarView)
+            guard let windowButtonsBackdrop = self?.windowButtonsBackdrop else { return }
 
-            addWindowDragHandle(titlebarView: titlebarView, toolbarView: toolbarView)
+            self?.addWindowDragHandle(titlebarView: titlebarView, toolbarView: toolbarView)
 
             accessoryClipView.translatesAutoresizingMaskIntoConstraints = false
-            accessoryView.translatesAutoresizingMaskIntoConstraints = false
-
-            NSLayoutConstraint.deactivate(tabBarConstraints)
-            tabBarConstraints = [
-                accessoryClipView.leftAnchor.constraint(equalTo: windowButtonsBackdrop.rightAnchor),
-                accessoryClipView.rightAnchor.constraint(equalTo: toolbarView.rightAnchor),
-                accessoryClipView.topAnchor.constraint(equalTo: toolbarView.topAnchor),
-                accessoryClipView.heightAnchor.constraint(equalTo: toolbarView.heightAnchor),
-                accessoryView.leftAnchor.constraint(equalTo: accessoryClipView.leftAnchor),
-                accessoryView.rightAnchor.constraint(equalTo: accessoryClipView.rightAnchor),
-                accessoryView.topAnchor.constraint(equalTo: accessoryClipView.topAnchor),
-                accessoryView.heightAnchor.constraint(equalTo: accessoryClipView.heightAnchor),
-            ]
-            NSLayoutConstraint.activate(tabBarConstraints)
-
+            accessoryClipView.leftAnchor.constraint(equalTo: windowButtonsBackdrop.rightAnchor).isActive = true
+            accessoryClipView.rightAnchor.constraint(equalTo: toolbarView.rightAnchor).isActive = true
+            accessoryClipView.topAnchor.constraint(equalTo: toolbarView.topAnchor).isActive = true
+            accessoryClipView.heightAnchor.constraint(equalTo: toolbarView.heightAnchor).isActive = true
             accessoryClipView.needsLayout = true
+
+            accessoryView.translatesAutoresizingMaskIntoConstraints = false
+            accessoryView.leftAnchor.constraint(equalTo: accessoryClipView.leftAnchor).isActive = true
+            accessoryView.rightAnchor.constraint(equalTo: accessoryClipView.rightAnchor).isActive = true
+            accessoryView.topAnchor.constraint(equalTo: accessoryClipView.topAnchor).isActive = true
+            accessoryView.heightAnchor.constraint(equalTo: accessoryClipView.heightAnchor).isActive = true
             accessoryView.needsLayout = true
 
-            workspaceSidebarWidthObserver = NotificationCenter.default.addObserver(
-                forName: .ghosttyWorkspaceSidebarWidthChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self, weak tabBarController] _ in
-                guard let self, let tabBarController else { return }
-                self.windowButtonsBackdrop?.removeFromSuperview()
-                self.windowButtonsBackdrop = nil
-                self.pushTabsToTitlebar(tabBarController)
-            }
-
-            hideToolbarOverflowButton()
-            hideTitleBarSeparators()
+            self?.hideToolbarOverflowButton()
+            self?.hideTitleBarSeparators()
         }
     }
 
@@ -496,11 +461,8 @@ class TitlebarTabsVenturaTerminalWindow: TerminalWindow {
         titlebarView.addSubview(view)
 
         view.translatesAutoresizingMaskIntoConstraints = false
-        let windowButtonsWidth: CGFloat = hasWindowButtons ? 78 : 0
-        let reservedSidebarWidth = max(windowButtonsWidth, workspaceSidebarTitlebarInset)
-
         view.leftAnchor.constraint(equalTo: toolbarView.leftAnchor).isActive = true
-        view.rightAnchor.constraint(equalTo: toolbarView.leftAnchor, constant: reservedSidebarWidth).isActive = true
+        view.rightAnchor.constraint(equalTo: toolbarView.leftAnchor, constant: hasWindowButtons ? 78 : 0).isActive = true
         view.topAnchor.constraint(equalTo: toolbarView.topAnchor).isActive = true
         view.heightAnchor.constraint(equalTo: toolbarView.heightAnchor).isActive = true
 
