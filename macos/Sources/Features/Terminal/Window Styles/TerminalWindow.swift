@@ -58,6 +58,11 @@ class TerminalWindow: NSWindow {
         windowController as? TerminalController
     }
 
+    var workspaceSidebarTitlebarInset: CGFloat {
+        guard terminalController != nil else { return 0 }
+        return WorkspaceSidebarView.storedSidebarWidth()
+    }
+
     /// The color assigned to this window's tab. Setting this updates the tab color indicator
     /// and marks the window's restorable state as dirty.
     var tabColor: TerminalTabColor = .none {
@@ -239,6 +244,18 @@ class TerminalWindow: NSWindow {
 
         guard let targetController = targetWindow.windowController as? BaseTerminalController else { return }
         targetController.promptTabTitle()
+    }
+
+    @objc private func moveTabToWorkspaceFromContextMenu(_ sender: NSMenuItem) {
+        guard let context = sender.representedObject as? TabWorkspaceMoveContext,
+              let controller = context.controller
+        else { return }
+
+        if let workspaceID = context.workspaceID {
+            controller.moveTabToWorkspaceCommand(workspaceID)
+        } else {
+            controller.moveTabToNewWorkspaceCommand()
+        }
     }
 
     override func mergeAllWindows(_ sender: Any?) {
@@ -704,6 +721,7 @@ private struct TabColorIndicatorView: View {
 extension TerminalWindow {
     private static let closeTabsOnRightMenuItemIdentifier = NSUserInterfaceItemIdentifier("com.mitchellh.ghostty.closeTabsOnTheRightMenuItem")
     private static let changeTitleMenuItemIdentifier = NSUserInterfaceItemIdentifier("com.mitchellh.ghostty.changeTitleMenuItem")
+    private static let moveTabToWorkspaceMenuItemIdentifier = NSUserInterfaceItemIdentifier("com.mitchellh.ghostty.moveTabToWorkspaceMenuItem")
     private static let tabColorSeparatorIdentifier = NSUserInterfaceItemIdentifier("com.mitchellh.ghostty.tabColorSeparator")
 
     private static let tabColorPaletteIdentifier = NSUserInterfaceItemIdentifier("com.mitchellh.ghostty.tabColorPalette")
@@ -759,6 +777,7 @@ extension TerminalWindow {
         menu.removeItems(withIdentifiers: [
             Self.tabColorSeparatorIdentifier,
             Self.changeTitleMenuItemIdentifier,
+            Self.moveTabToWorkspaceMenuItemIdentifier,
             Self.tabColorPaletteIdentifier
         ])
 
@@ -774,6 +793,14 @@ extension TerminalWindow {
         changeTitleItem.setImageIfDesired(systemSymbolName: "pencil.line")
         menu.addItem(changeTitleItem)
 
+        if let target {
+            let moveItem = NSMenuItem(title: "Move to Workspace", action: nil, keyEquivalent: "")
+            moveItem.identifier = Self.moveTabToWorkspaceMenuItemIdentifier
+            moveItem.setImageIfDesired(systemSymbolName: "rectangle.portrait.and.arrow.right")
+            moveItem.submenu = makeMoveTabToWorkspaceMenu(for: target)
+            menu.addItem(moveItem)
+        }
+
         let paletteItem = NSMenuItem()
         paletteItem.identifier = Self.tabColorPaletteIdentifier
         paletteItem.view = makeTabColorPaletteView(
@@ -782,6 +809,50 @@ extension TerminalWindow {
             (target?.window as? TerminalWindow)?.tabColor = color
         }
         menu.addItem(paletteItem)
+    }
+
+    private func makeMoveTabToWorkspaceMenu(for target: TerminalController) -> NSMenu {
+        let menu = NSMenu()
+        let workspaces = WorkspaceStore.shared.workspaces(in: target.workspaceGroupID)
+
+        for workspace in workspaces where workspace.id != target.workspaceID {
+            let item = NSMenuItem(
+                title: workspace.name,
+                action: #selector(TerminalWindow.moveTabToWorkspaceFromContextMenu(_:)),
+                keyEquivalent: "")
+            item.target = self
+            item.representedObject = TabWorkspaceMoveContext(
+                controller: target,
+                workspaceID: workspace.id)
+            menu.addItem(item)
+        }
+
+        if !menu.items.isEmpty {
+            menu.addItem(.separator())
+        }
+
+        let newWorkspaceItem = NSMenuItem(
+            title: "New Workspace",
+            action: #selector(TerminalWindow.moveTabToWorkspaceFromContextMenu(_:)),
+            keyEquivalent: "")
+        newWorkspaceItem.target = self
+        newWorkspaceItem.representedObject = TabWorkspaceMoveContext(
+            controller: target,
+            workspaceID: nil)
+        newWorkspaceItem.setImageIfDesired(systemSymbolName: "plus")
+        menu.addItem(newWorkspaceItem)
+
+        return menu
+    }
+}
+
+private final class TabWorkspaceMoveContext {
+    weak var controller: TerminalController?
+    let workspaceID: UUID?
+
+    init(controller: TerminalController, workspaceID: UUID?) {
+        self.controller = controller
+        self.workspaceID = workspaceID
     }
 }
 

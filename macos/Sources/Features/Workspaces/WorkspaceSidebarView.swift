@@ -11,6 +11,7 @@ struct WorkspaceSidebarView: View {
     let closeWorkspace: (UUID) -> Void
 
     static let defaultWidth: CGFloat = 168
+    static let userDefaultsKey = "WorkspaceSidebarWidth"
     private static let minWidth: CGFloat = 120
     private static let maxWidth: CGFloat = 320
 
@@ -72,6 +73,11 @@ struct WorkspaceSidebarView: View {
         .onAppear {
             isControlKeyPressed = NSEvent.modifierFlags.contains(.control)
         }
+        .onChange(of: storedWidth) { newWidth in
+            NotificationCenter.default.post(
+                name: .ghosttyWorkspaceSidebarWidthChanged,
+                object: Self.clampedWidth(CGFloat(newWidth)))
+        }
         .onReceive(NotificationCenter.default.publisher(for: .ghosttyWorkspaceModifierFlagsChanged)) { notification in
             guard let isControlKeyPressed = notification.object as? Bool else { return }
             self.isControlKeyPressed = isControlKeyPressed
@@ -118,7 +124,13 @@ struct WorkspaceSidebarView: View {
         }
     }
 
-    private static func clampedWidth(_ width: CGFloat) -> CGFloat {
+    static func storedSidebarWidth() -> CGFloat {
+        let storedWidth = UserDefaults.standard.double(forKey: userDefaultsKey)
+        guard storedWidth > 0 else { return defaultWidth }
+        return clampedWidth(CGFloat(storedWidth))
+    }
+
+    static func clampedWidth(_ width: CGFloat) -> CGFloat {
         min(max(width, minWidth), maxWidth)
     }
 

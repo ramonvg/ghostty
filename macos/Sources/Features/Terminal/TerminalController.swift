@@ -584,6 +584,15 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         closeWorkspace(activeWorkspaceID)
     }
 
+    func moveTabToWorkspaceCommand(_ workspaceID: UUID) {
+        WorkspaceStore.shared.moveController(self, to: workspaceID)
+    }
+
+    func moveTabToNewWorkspaceCommand() {
+        let workspaceID = WorkspaceStore.shared.createWorkspace(in: workspaceGroupID)
+        WorkspaceStore.shared.moveController(self, to: workspaceID)
+    }
+
     func performWorkspaceKeyboardShortcut(with event: NSEvent) -> Bool {
         guard event.type == .keyDown else { return false }
 

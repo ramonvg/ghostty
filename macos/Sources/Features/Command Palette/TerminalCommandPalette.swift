@@ -121,7 +121,7 @@ struct TerminalCommandPaletteView: View {
     private var workspaceOptions: [CommandOption] {
         guard let controller = surfaceView.window?.windowController as? TerminalController else { return [] }
 
-        return [
+        var options = [
             CommandOption(
                 title: "Workspace: Create",
                 description: "Create and switch to a new workspace",
@@ -146,6 +146,28 @@ struct TerminalCommandPaletteView: View {
                 controller.closeActiveWorkspaceCommand()
             },
         ]
+
+        let workspaces = WorkspaceStore.shared.workspaces(in: controller.workspaceGroupID)
+        options.append(contentsOf: workspaces.compactMap { workspace in
+            guard workspace.id != controller.workspaceID else { return nil }
+            return CommandOption(
+                title: "Workspace: Move Tab to \(workspace.name)",
+                description: "Move the current tab to \(workspace.name)",
+                leadingIcon: "rectangle.portrait.and.arrow.right"
+            ) {
+                controller.moveTabToWorkspaceCommand(workspace.id)
+            }
+        })
+
+        options.append(CommandOption(
+            title: "Workspace: Move Tab to New Workspace",
+            description: "Create a workspace and move the current tab there",
+            leadingIcon: "plus.rectangle.portrait"
+        ) {
+            controller.moveTabToNewWorkspaceCommand()
+        })
+
+        return options
     }
 
     /// Custom commands from the command-palette-entry configuration.

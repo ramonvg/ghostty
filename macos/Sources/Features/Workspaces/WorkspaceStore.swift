@@ -304,6 +304,75 @@ final class WorkspaceStore: ObservableObject {
         groups[controller.workspaceGroupID] = group
     }
 
+    func moveController(_ controller: TerminalController, to targetWorkspaceID: UUID) {
+        let groupID = controller.workspaceGroupID
+        let sourceWorkspaceID = controller.workspaceID
+        guard sourceWorkspaceID != targetWorkspaceID else { return }
+        guard var group = groups[groupID] else { return }
+        guard let sourceWorkspaceIndex = group.workspaces.firstIndex(where: { $0.id == sourceWorkspaceID }),
+              let targetWorkspaceIndex = group.workspaces.firstIndex(where: { $0.id == targetWorkspaceID }),
+              let sourceTabIndex = group.workspaces[sourceWorkspaceIndex].tabWindowIDs.firstIndex(of: controller.workspaceTabID)
+        else { return }
+
+        let sourceWasActive = group.activeWorkspaceID == sourceWorkspaceID
+        let replacementTabWindowID = replacementTabWindowID(
+            afterRemovingTabAt: sourceTabIndex,
+            from: group.workspaces[sourceWorkspaceIndex].tabWindowIDs)
+        let replacementController = replacementTabWindowID.flatMap { controllersByTabWindowID[$0]?.value }
+
+        group.workspaces[sourceWorkspaceIndex].tabWindowIDs.remove(at: sourceTabIndex)
+        if group.workspaces[sourceWorkspaceIndex].activeTabWindowID == controller.workspaceTabID {
+            group.workspaces[sourceWorkspaceIndex].activeTabWindowID = replacementTabWindowID
+        }
+
+        group.workspaces[targetWorkspaceIndex].tabWindowIDs.append(controller.workspaceTabID)
+        group.workspaces[targetWorkspaceIndex].activeTabWindowID = controller.workspaceTabID
+        controller.workspaceID = targetWorkspaceID
+
+        if group.workspaces[sourceWorkspaceIndex].tabWindowIDs.isEmpty {
+            group.workspaces.remove(at: sourceWorkspaceIndex)
+            if group.activeWorkspaceID == sourceWorkspaceID {
+                group.activeWorkspaceID = targetWorkspaceID
+            }
+        }
+
+        groups[groupID] = group
+
+        guard sourceWasActive else {
+            if group.activeWorkspaceID == targetWorkspaceID {
+                activateWorkspace(targetWorkspaceID, in: groupID, from: controller)
+            }
+            return
+        }
+
+        if let replacementController, let replacementWindow = replacementController.window {
+            if let movedWindow = controller.window {
+                if let tabGroup = movedWindow.tabGroup, tabGroup.windows.count > 1 {
+                    tabGroup.removeWindow(movedWindow)
+                }
+                movedWindow.orderOut(nil)
+            }
+
+            replacementWindow.makeKeyAndOrderFront(nil)
+            replacementController.relabelTabs()
+            return
+        }
+
+        activateWorkspace(targetWorkspaceID, in: groupID, from: controller)
+    }
+
+    private func replacementTabWindowID(afterRemovingTabAt removedIndex: Int, from tabWindowIDs: [UUID]) -> UUID? {
+        if tabWindowIDs.indices.contains(removedIndex + 1) {
+            return tabWindowIDs[removedIndex + 1]
+        }
+
+        if tabWindowIDs.indices.contains(removedIndex - 1) {
+            return tabWindowIDs[removedIndex - 1]
+        }
+
+        return nil
+    }
+
     private func setupControllerSubscriptions(for controller: TerminalController) {
         var cancellables: Set<AnyCancellable> = []
         controller.$surfaceTree
