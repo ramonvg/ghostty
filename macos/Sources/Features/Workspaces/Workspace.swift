@@ -25,4 +25,10 @@ struct WorkspaceGroup: Identifiable, Codable, Equatable {
     var workspaces: [Workspace]
     var activeWorkspaceID: UUID
 }
+
+struct WorkspaceRenameRequest: Equatable {
+    let groupID: UUID
+    let workspaceID: UUID
+    let token: UUID
+}
 #endif

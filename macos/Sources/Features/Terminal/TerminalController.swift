@@ -458,6 +458,15 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         controller.isBackgroundOpaque = parentController.isBackgroundOpaque
         guard let window = controller.window else { return controller }
 
+        // Native tabs share one visible frame. Give the backing NSWindow the
+        // parent's frame before tabbing it, otherwise AppKit may resize the
+        // whole tab group to the new window's default size. This is especially
+        // noticeable when creating a new workspace, since its first tab starts
+        // life as a separate hidden window.
+        if !parent.styleMask.contains(.fullScreen) {
+            window.setFrame(parent.frame, display: false)
+        }
+
         // If the parent is miniaturized, then macOS exhibits really strange behaviors
         // so we have to bring it back out.
         if parent.isMiniaturized { parent.deminiaturize(self) }
@@ -561,11 +570,31 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         WorkspaceStore.shared.activateWorkspace(workspaceID, in: workspaceGroupID, from: self)
     }
 
+    func createWorkspaceCommand() {
+        createWorkspace()
+    }
+
+    func renameActiveWorkspaceCommand() {
+        guard let activeWorkspaceID = WorkspaceStore.shared.activeWorkspaceID(in: workspaceGroupID) else { return }
+        WorkspaceStore.shared.requestRenameWorkspace(activeWorkspaceID, in: workspaceGroupID)
+    }
+
+    func closeActiveWorkspaceCommand() {
+        guard let activeWorkspaceID = WorkspaceStore.shared.activeWorkspaceID(in: workspaceGroupID) else { return }
+        closeWorkspace(activeWorkspaceID)
+    }
+
     func performWorkspaceKeyboardShortcut(with event: NSEvent) -> Bool {
         guard event.type == .keyDown else { return false }
 
         if Self.isNewWorkspaceShortcut(event) {
             createWorkspace()
+            return true
+        }
+
+        if Self.isCloseWorkspaceShortcut(event),
+           WorkspaceStore.shared.activeWorkspaceID(in: workspaceGroupID) != nil {
+            closeActiveWorkspaceCommand()
             return true
         }
 
@@ -583,8 +612,14 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     private static func isNewWorkspaceShortcut(_ event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection([.control, .shift, .option, .command])
-        guard modifiers == [.control, .shift] else { return false }
+        guard modifiers == .control else { return false }
         return event.charactersIgnoringModifiers?.lowercased() == "n"
+    }
+
+    private static func isCloseWorkspaceShortcut(_ event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.control, .shift, .option, .command])
+        guard modifiers == .control else { return false }
+        return event.charactersIgnoringModifiers?.lowercased() == "w" || event.keyCode == 13
     }
 
     private static func workspaceNumber(from event: NSEvent) -> Int? {
@@ -624,6 +659,50 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         }
     }
 
+    private func closeWorkspace(_ workspaceID: UUID) {
+        let controllers = WorkspaceStore.shared.controllers(in: workspaceGroupID, workspaceID: workspaceID)
+        guard !controllers.isEmpty else {
+            WorkspaceStore.shared.deleteEmptyWorkspace(workspaceID, in: workspaceGroupID)
+            return
+        }
+
+        let close: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.closeWorkspaceImmediately(workspaceID)
+        }
+
+        guard controllers.contains(where: { controller in
+            controller.surfaceTree.contains(where: { $0.needsConfirmQuit })
+        }) else {
+            close()
+            return
+        }
+
+        confirmClose(
+            messageText: "Close Workspace?",
+            informativeText: "All terminal sessions in this workspace will be terminated.",
+            confirmButtonTitle: "Close Workspace",
+            completion: close)
+    }
+
+    private func closeWorkspaceImmediately(_ workspaceID: UUID) {
+        let controllers = WorkspaceStore.shared.controllers(in: workspaceGroupID, workspaceID: workspaceID)
+        guard !controllers.isEmpty else {
+            WorkspaceStore.shared.deleteEmptyWorkspace(workspaceID, in: workspaceGroupID)
+            return
+        }
+
+        undoManager?.beginUndoGrouping()
+        defer {
+            undoManager?.setActionName("Close Workspace")
+            undoManager?.endUndoGrouping()
+        }
+
+        for controller in controllers {
+            controller.closeTabImmediately(registerRedo: false)
+        }
+    }
+
     private func createWorkspace() {
         guard let window else { return }
         let baseConfig: Ghostty.SurfaceConfiguration?
@@ -635,6 +714,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             baseConfig = nil
         }
 
+        let sourceFrame = window.frame
         let workspaceID = WorkspaceStore.shared.createWorkspace(in: workspaceGroupID)
         guard let controller = TerminalController.newTab(
             ghostty,
@@ -646,6 +726,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             return
         }
 
+        controller.window?.setFrame(sourceFrame, display: false)
         WorkspaceStore.shared.activateWorkspace(workspaceID, in: workspaceGroupID, from: controller)
     }
 
@@ -1352,6 +1433,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                 },
                 createWorkspace: { [weak self] in
                     self?.createWorkspace()
+                },
+                closeWorkspace: { [weak self] workspaceID in
+                    self?.closeWorkspace(workspaceID)
                 })
         }
 

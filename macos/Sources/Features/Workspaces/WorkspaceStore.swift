@@ -7,6 +7,7 @@ final class WorkspaceStore: ObservableObject {
     static let shared = WorkspaceStore()
 
     @Published private(set) var groups: [UUID: WorkspaceGroup] = [:]
+    @Published private(set) var renameRequest: WorkspaceRenameRequest?
 
     private var controllersByTabWindowID: [UUID: Weak<TerminalController>] = [:]
     private var frameSyncInProgress = false
@@ -95,6 +96,23 @@ final class WorkspaceStore: ObservableObject {
             name: name ?? defaultWorkspaceName(at: group.workspaces.count)))
         groups[groupID] = group
         return workspaceID
+    }
+
+    func requestRenameWorkspace(_ workspaceID: UUID, in groupID: UUID) {
+        renameRequest = WorkspaceRenameRequest(
+            groupID: groupID,
+            workspaceID: workspaceID,
+            token: UUID())
+    }
+
+    func renameWorkspace(_ workspaceID: UUID, in groupID: UUID, to name: String) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return }
+        guard var group = groups[groupID] else { return }
+        guard let workspaceIndex = group.workspaces.firstIndex(where: { $0.id == workspaceID }) else { return }
+
+        group.workspaces[workspaceIndex].name = trimmedName
+        groups[groupID] = group
     }
 
     func deleteEmptyWorkspace(_ workspaceID: UUID, in groupID: UUID) {

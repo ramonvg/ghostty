@@ -64,7 +64,7 @@ struct TerminalCommandPaletteView: View {
         // Sort the rest. We replace ":" with a character that sorts before space
         // so that "Foo:" sorts before "Foo Bar:". Use sortKey as a tie-breaker
         // for stable ordering when titles are equal.
-        options.append(contentsOf: (jumpOptions + terminalOptions).sorted { a, b in
+        options.append(contentsOf: (workspaceOptions + jumpOptions + terminalOptions).sorted { a, b in
             let aNormalized = a.title.replacingOccurrences(of: ":", with: "\t")
             let bNormalized = b.title.replacingOccurrences(of: ":", with: "\t")
             let comparison = aNormalized.localizedCaseInsensitiveCompare(bNormalized)
@@ -115,6 +115,37 @@ struct TerminalCommandPaletteView: View {
         })
 
         return options
+    }
+
+    /// Workspace commands.
+    private var workspaceOptions: [CommandOption] {
+        guard let controller = surfaceView.window?.windowController as? TerminalController else { return [] }
+
+        return [
+            CommandOption(
+                title: "Workspace: Create",
+                description: "Create and switch to a new workspace",
+                symbols: ["⌃", "N"],
+                leadingIcon: "plus.rectangle.on.rectangle"
+            ) {
+                controller.createWorkspaceCommand()
+            },
+            CommandOption(
+                title: "Workspace: Rename",
+                description: "Rename the active workspace inline",
+                leadingIcon: "pencil"
+            ) {
+                controller.renameActiveWorkspaceCommand()
+            },
+            CommandOption(
+                title: "Workspace: Close",
+                description: "Close the active workspace",
+                symbols: ["⌃", "W"],
+                leadingIcon: "xmark.rectangle"
+            ) {
+                controller.closeActiveWorkspaceCommand()
+            },
+        ]
     }
 
     /// Custom commands from the command-palette-entry configuration.

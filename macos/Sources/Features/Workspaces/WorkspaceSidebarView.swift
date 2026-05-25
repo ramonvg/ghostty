@@ -8,6 +8,7 @@ struct WorkspaceSidebarView: View {
     let groupID: UUID
     let activateWorkspace: (UUID) -> Void
     let createWorkspace: () -> Void
+    let closeWorkspace: (UUID) -> Void
 
     static let defaultWidth: CGFloat = 168
     private static let minWidth: CGFloat = 120
@@ -15,6 +16,9 @@ struct WorkspaceSidebarView: View {
 
     @AppStorage("WorkspaceSidebarWidth") private var storedWidth: Double = 168
     @State private var resizeStartWidth: CGFloat?
+    @State private var editingWorkspaceID: UUID?
+    @State private var renameDraft: String = ""
+    @FocusState private var focusedRenameWorkspaceID: UUID?
 
     private var width: CGFloat {
         Self.clampedWidth(CGFloat(storedWidth))
@@ -54,6 +58,14 @@ struct WorkspaceSidebarView: View {
         .background(Color(NSColor.controlBackgroundColor))
         .overlay(alignment: .trailing) {
             resizeHandle
+        }
+        .onChange(of: store.renameRequest) { request in
+            guard let request, request.groupID == groupID else { return }
+            guard let workspace = store.workspaces(in: groupID).first(where: { $0.id == request.workspaceID }) else {
+                return
+            }
+
+            beginRename(workspace)
         }
     }
 
@@ -101,37 +113,92 @@ struct WorkspaceSidebarView: View {
         min(max(width, minWidth), maxWidth)
     }
 
+    @ViewBuilder
     private func workspaceButton(_ workspace: Workspace) -> some View {
         let isActive = workspace.id == store.activeWorkspaceID(in: groupID)
 
-        return Button {
-            activateWorkspace(workspace.id)
-        } label: {
-            HStack(spacing: 8) {
+        if editingWorkspaceID == workspace.id {
+            workspaceRowContent(workspace, isActive: isActive)
+                .contextMenu { workspaceContextMenu(workspace) }
+                .help(workspace.name)
+        } else {
+            Button {
+                activateWorkspace(workspace.id)
+            } label: {
+                workspaceRowContent(workspace, isActive: isActive)
+            }
+            .buttonStyle(.plain)
+            .contextMenu { workspaceContextMenu(workspace) }
+            .help(workspace.name)
+        }
+    }
+
+    private func workspaceRowContent(_ workspace: Workspace, isActive: Bool) -> some View {
+        HStack(spacing: 8) {
+            if editingWorkspaceID == workspace.id {
+                TextField("Workspace name", text: $renameDraft)
+                    .textFieldStyle(.plain)
+                    .focused($focusedRenameWorkspaceID, equals: workspace.id)
+                    .onSubmit { commitRename() }
+                    .onAppear { focusedRenameWorkspaceID = workspace.id }
+            } else {
                 Text(workspace.name)
                     .lineLimit(1)
                     .truncationMode(.tail)
-
-                Spacer(minLength: 4)
-
-                if !workspace.tabWindowIDs.isEmpty {
-                    Text("\(workspace.tabWindowIDs.count)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
             }
-            .font(.system(size: 12))
-            .foregroundStyle(isActive ? Color.accentColor : Color.primary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
-            .background {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isActive ? Color.accentColor.opacity(0.16) : Color.clear)
+
+            Spacer(minLength: 4)
+
+            if !workspace.tabWindowIDs.isEmpty {
+                Text("\(workspace.tabWindowIDs.count)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
-        .buttonStyle(.plain)
-        .help(workspace.name)
+        .font(.system(size: 12))
+        .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .background {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(isActive ? Color.accentColor.opacity(0.16) : Color.clear)
+        }
+    }
+
+    @ViewBuilder
+    private func workspaceContextMenu(_ workspace: Workspace) -> some View {
+        Button("Rename") {
+            beginRename(workspace)
+        }
+
+        Button("Close Workspace", role: .destructive) {
+            if editingWorkspaceID == workspace.id {
+                cancelRename()
+            }
+            closeWorkspace(workspace.id)
+        }
+    }
+
+    private func beginRename(_ workspace: Workspace) {
+        editingWorkspaceID = workspace.id
+        renameDraft = workspace.name
+        focusedRenameWorkspaceID = workspace.id
+        DispatchQueue.main.async {
+            focusedRenameWorkspaceID = workspace.id
+        }
+    }
+
+    private func commitRename() {
+        guard let editingWorkspaceID else { return }
+        store.renameWorkspace(editingWorkspaceID, in: groupID, to: renameDraft)
+        cancelRename()
+    }
+
+    private func cancelRename() {
+        editingWorkspaceID = nil
+        focusedRenameWorkspaceID = nil
+        renameDraft = ""
     }
 }
 #endif

@@ -52,6 +52,7 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
     var workspaceGroupID: UUID? = nil
     var activateWorkspace: ((UUID) -> Void)? = nil
     var createWorkspace: (() -> Void)? = nil
+    var closeWorkspace: ((UUID) -> Void)? = nil
 #endif
 
     /// The most recently focused surface, equal to `focusedSurface` when it is non-nil.
@@ -77,13 +78,15 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
         if let workspaceStore,
            let workspaceGroupID,
            let activateWorkspace,
-           let createWorkspace {
+           let createWorkspace,
+           let closeWorkspace {
             HStack(spacing: 0) {
                 WorkspaceSidebarView(
                     store: workspaceStore,
                     groupID: workspaceGroupID,
                     activateWorkspace: activateWorkspace,
-                    createWorkspace: createWorkspace)
+                    createWorkspace: createWorkspace,
+                    closeWorkspace: closeWorkspace)
                 terminalSplitTreeView
             }
         } else {
