@@ -759,7 +759,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         }
 
         controller.window?.setFrame(sourceFrame, display: false)
-        WorkspaceStore.shared.activateWorkspace(workspaceID, in: workspaceGroupID, from: controller)
+        WorkspaceStore.shared.activateWorkspace(workspaceID, in: workspaceGroupID, from: self)
     }
 
     @objc private func ghosttyConfigDidChange(_ notification: Notification) {

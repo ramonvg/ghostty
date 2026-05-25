@@ -513,10 +513,11 @@ final class WorkspaceStore: ObservableObject {
 
         let groupID = firstController.workspaceGroupID
         let workspaceID = firstController.workspaceID
-        let orderedTabWindowIDs = controllers
-            .filter { $0.workspaceGroupID == groupID && $0.workspaceID == workspaceID }
-            .map { $0.workspaceTabID }
+        guard controllers.allSatisfy({ controller in
+            controller.workspaceGroupID == groupID && controller.workspaceID == workspaceID
+        }) else { return }
 
+        let orderedTabWindowIDs = controllers.map { $0.workspaceTabID }
         guard !orderedTabWindowIDs.isEmpty else { return }
         guard var group = groups[groupID],
               let workspaceIndex = group.workspaces.firstIndex(where: { $0.id == workspaceID })
