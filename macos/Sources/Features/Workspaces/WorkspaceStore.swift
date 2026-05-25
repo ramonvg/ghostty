@@ -170,6 +170,18 @@ final class WorkspaceStore: ObservableObject {
         groups[groupID] = group
     }
 
+    func moveWorkspace(_ workspaceID: UUID, in groupID: UUID, to destinationIndex: Int) {
+        guard var group = groups[groupID] else { return }
+        guard let sourceIndex = group.workspaces.firstIndex(where: { $0.id == workspaceID }) else { return }
+        guard group.workspaces.indices.contains(destinationIndex) else { return }
+        guard sourceIndex != destinationIndex else { return }
+
+        let workspace = group.workspaces.remove(at: sourceIndex)
+        let insertionIndex = min(destinationIndex, group.workspaces.count)
+        group.workspaces.insert(workspace, at: insertionIndex)
+        groups[groupID] = group
+    }
+
     func deleteEmptyWorkspace(_ workspaceID: UUID, in groupID: UUID) {
         guard var group = groups[groupID] else { return }
         guard let workspaceIndex = group.workspaces.firstIndex(where: { $0.id == workspaceID }) else { return }

@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct WorkspaceSidebarView: View {
     @ObservedObject var store: WorkspaceStore
@@ -18,6 +19,7 @@ struct WorkspaceSidebarView: View {
     @State private var resizeStartWidth: CGFloat?
     @State private var editingWorkspaceID: UUID?
     @State private var renameDraft: String = ""
+    @State private var draggingWorkspaceID: UUID?
     @State private var isControlKeyPressed = false
     @FocusState private var focusedRenameWorkspaceID: UUID?
 
@@ -139,7 +141,18 @@ struct WorkspaceSidebarView: View {
             .buttonStyle(.plain)
             .contextMenu { workspaceContextMenu(workspace) }
             .help(workspace.name)
+            .modifier(workspaceReorderModifier(workspace, index: index))
         }
+    }
+
+    private func workspaceReorderModifier(_ workspace: Workspace, index: Int) -> WorkspaceReorderModifier {
+        WorkspaceReorderModifier(
+            store: store,
+            groupID: groupID,
+            workspaceID: workspace.id,
+            destinationIndex: index,
+            isEnabled: editingWorkspaceID == nil,
+            draggingWorkspaceID: $draggingWorkspaceID)
     }
 
     private func workspaceRowContent(_ workspace: Workspace, index: Int, isActive: Bool) -> some View {
@@ -242,6 +255,65 @@ struct WorkspaceSidebarView: View {
         editingWorkspaceID = nil
         focusedRenameWorkspaceID = nil
         renameDraft = ""
+    }
+}
+
+private struct WorkspaceReorderModifier: ViewModifier {
+    let store: WorkspaceStore
+    let groupID: UUID
+    let workspaceID: UUID
+    let destinationIndex: Int
+    let isEnabled: Bool
+    @Binding var draggingWorkspaceID: UUID?
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content
+                .opacity(draggingWorkspaceID == workspaceID ? 0.55 : 1)
+                .onDrag {
+                    draggingWorkspaceID = workspaceID
+                    return NSItemProvider(object: workspaceID.uuidString as NSString)
+                }
+                .onDrop(
+                    of: [.plainText],
+                    delegate: WorkspaceReorderDropDelegate(
+                        store: store,
+                        groupID: groupID,
+                        destinationWorkspaceID: workspaceID,
+                        destinationIndex: destinationIndex,
+                        draggingWorkspaceID: $draggingWorkspaceID))
+        } else {
+            content
+        }
+    }
+}
+
+private struct WorkspaceReorderDropDelegate: DropDelegate {
+    let store: WorkspaceStore
+    let groupID: UUID
+    let destinationWorkspaceID: UUID
+    let destinationIndex: Int
+    @Binding var draggingWorkspaceID: UUID?
+
+    func dropEntered(info: DropInfo) {
+        guard let draggingWorkspaceID else { return }
+        guard draggingWorkspaceID != destinationWorkspaceID else { return }
+        store.moveWorkspace(draggingWorkspaceID, in: groupID, to: destinationIndex)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggingWorkspaceID = nil
+        return true
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        if !info.hasItemsConforming(to: [.plainText]) {
+            draggingWorkspaceID = nil
+        }
     }
 }
 #endif
