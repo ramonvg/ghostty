@@ -55,7 +55,15 @@ pub fn create(b: *std.Build, opts: Options) ?*MetallibStep {
         b,
         b.fmt("metal {s}", .{opts.name}),
     );
-    run_ir.addArgs(&.{ "/usr/bin/xcrun", "-sdk", sdk, "metal", "-o" });
+    run_ir.addArgs(&.{
+        "/usr/bin/env",
+        "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer",
+        "/usr/bin/xcrun",
+        "-sdk",
+        sdk,
+        "metal",
+        "-o",
+    });
     const output_ir = run_ir.addOutputFileArg(b.fmt("{s}.ir", .{opts.name}));
     run_ir.addArgs(&.{"-c"});
     for (opts.sources) |source| run_ir.addFileArg(source);
@@ -70,7 +78,15 @@ pub fn create(b: *std.Build, opts: Options) ?*MetallibStep {
         b,
         b.fmt("metallib {s}", .{opts.name}),
     );
-    run_lib.addArgs(&.{ "/usr/bin/xcrun", "-sdk", sdk, "metallib", "-o" });
+    run_lib.addArgs(&.{
+        "/usr/bin/env",
+        "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer",
+        "/usr/bin/xcrun",
+        "-sdk",
+        sdk,
+        "metallib",
+        "-o",
+    });
     const output_lib = run_lib.addOutputFileArg(b.fmt("{s}.metallib", .{opts.name}));
     run_lib.addFileArg(output_ir);
     run_lib.step.dependOn(&run_ir.step);

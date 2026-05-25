@@ -47,6 +47,13 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
     // An optional delegate to receive information about terminal changes.
     weak var delegate: (any TerminalViewDelegate)?
 
+#if os(macOS)
+    var workspaceStore: WorkspaceStore? = nil
+    var workspaceGroupID: UUID? = nil
+    var activateWorkspace: ((UUID) -> Void)? = nil
+    var createWorkspace: (() -> Void)? = nil
+#endif
+
     /// The most recently focused surface, equal to `focusedSurface` when it is non-nil.
     @State private var lastFocusedSurface: Weak<Ghostty.SurfaceView>?
 
@@ -64,6 +71,56 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
         return URL(fileURLWithPath: surfacePwd)
     }
 
+    @ViewBuilder
+    private var terminalContent: some View {
+#if os(macOS)
+        if let workspaceStore,
+           let workspaceGroupID,
+           let activateWorkspace,
+           let createWorkspace {
+            HStack(spacing: 0) {
+                WorkspaceSidebarView(
+                    store: workspaceStore,
+                    groupID: workspaceGroupID,
+                    activateWorkspace: activateWorkspace,
+                    createWorkspace: createWorkspace)
+                terminalSplitTreeView
+            }
+        } else {
+            terminalSplitTreeView
+        }
+#else
+        terminalSplitTreeView
+#endif
+    }
+
+    private var terminalSplitTreeView: some View {
+        TerminalSplitTreeView(
+            tree: viewModel.surfaceTree,
+            action: { delegate?.performSplitAction($0) })
+            .environmentObject(ghostty)
+            .ghosttyLastFocusedSurface(lastFocusedSurface)
+            .focused($focused)
+            .onAppear { self.focused = true }
+            .onChange(of: focusedSurface) { newValue in
+                // We want to keep track of our last focused surface so even if
+                // we lose focus we keep this set to the last non-nil value.
+                if newValue != nil {
+                    lastFocusedSurface = .init(newValue)
+                    self.delegate?.focusedSurfaceDidChange(to: newValue)
+                }
+            }
+            .onChange(of: pwdURL) { newValue in
+                self.delegate?.pwdDidChange(to: newValue)
+            }
+            .onChange(of: cellSize) { newValue in
+                guard let size = newValue else { return }
+                self.delegate?.cellSizeDidChange(to: size)
+            }
+            .frame(idealWidth: lastFocusedSurface?.value?.initialSize?.width,
+                   idealHeight: lastFocusedSurface?.value?.initialSize?.height)
+    }
+
     var body: some View {
         switch ghostty.readiness {
         case .loading:
@@ -79,30 +136,7 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                         DebugBuildWarningView()
                     }
 
-                    TerminalSplitTreeView(
-                        tree: viewModel.surfaceTree,
-                        action: { delegate?.performSplitAction($0) })
-                        .environmentObject(ghostty)
-                        .ghosttyLastFocusedSurface(lastFocusedSurface)
-                        .focused($focused)
-                        .onAppear { self.focused = true }
-                        .onChange(of: focusedSurface) { newValue in
-                            // We want to keep track of our last focused surface so even if
-                            // we lose focus we keep this set to the last non-nil value.
-                            if newValue != nil {
-                                lastFocusedSurface = .init(newValue)
-                                self.delegate?.focusedSurfaceDidChange(to: newValue)
-                            }
-                        }
-                        .onChange(of: pwdURL) { newValue in
-                            self.delegate?.pwdDidChange(to: newValue)
-                        }
-                        .onChange(of: cellSize) { newValue in
-                            guard let size = newValue else { return }
-                            self.delegate?.cellSizeDidChange(to: size)
-                        }
-                        .frame(idealWidth: lastFocusedSurface?.value?.initialSize?.width,
-                               idealHeight: lastFocusedSurface?.value?.initialSize?.height)
+                    terminalContent
                 }
                 // Ignore safe area to extend up in to the titlebar region if we have the "hidden" titlebar style
                 .ignoresSafeArea(.container, edges: ghostty.config.macosTitlebarStyle == .hidden ? .top : [])
