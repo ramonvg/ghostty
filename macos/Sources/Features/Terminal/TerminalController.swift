@@ -268,9 +268,17 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     static func newWindow(
         _ ghostty: Ghostty.App,
         withBaseConfig baseConfig: Ghostty.SurfaceConfiguration? = nil,
-        withParent explicitParent: NSWindow? = nil
+        withParent explicitParent: NSWindow? = nil,
+        workspaceGroupID: UUID? = nil,
+        workspaceID: UUID? = nil,
+        workspaceTabID: UUID = UUID()
     ) -> TerminalController {
-        let c = TerminalController.init(ghostty, withBaseConfig: baseConfig)
+        let c = TerminalController.init(
+            ghostty,
+            withBaseConfig: baseConfig,
+            workspaceGroupID: workspaceGroupID,
+            workspaceID: workspaceID,
+            workspaceTabID: workspaceTabID)
 
         // Get our parent. Our parent is the one explicitly given to us,
         // otherwise the focused terminal, otherwise an arbitrary one.
@@ -341,7 +349,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                     _ = TerminalController.newWindow(
                         ghostty,
                         withBaseConfig: baseConfig,
-                        withParent: explicitParent)
+                        withParent: explicitParent,
+                        workspaceGroupID: workspaceGroupID,
+                        workspaceID: workspaceID,
+                        workspaceTabID: workspaceTabID)
                 }
             }
         }
@@ -427,13 +438,19 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         _ ghostty: Ghostty.App,
         from parent: NSWindow? = nil,
         withBaseConfig baseConfig: Ghostty.SurfaceConfiguration? = nil,
-        workspaceID: UUID? = nil
+        workspaceID: UUID? = nil,
+        workspaceTabID: UUID = UUID()
     ) -> TerminalController? {
         // Making sure that we're dealing with a TerminalController. If not,
         // then we just create a new window.
         guard let parent,
               let parentController = parent.windowController as? TerminalController else {
-            return newWindow(ghostty, withBaseConfig: baseConfig, withParent: parent)
+            return newWindow(
+                ghostty,
+                withBaseConfig: baseConfig,
+                withParent: parent,
+                workspaceID: workspaceID,
+                workspaceTabID: workspaceTabID)
         }
 
         // If our parent is in non-native fullscreen, then new tabs do not work.
@@ -454,7 +471,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             ghostty,
             withBaseConfig: baseConfig,
             workspaceGroupID: parentController.workspaceGroupID,
-            workspaceID: workspaceID ?? parentController.workspaceID)
+            workspaceID: workspaceID ?? parentController.workspaceID,
+            workspaceTabID: workspaceTabID)
         controller.isBackgroundOpaque = parentController.isBackgroundOpaque
         guard let window = controller.window else { return controller }
 
@@ -1587,6 +1605,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         super.windowWillClose(notification)
         cancelPendingInitialPresentation()
         self.relabelTabs()
+        if TerminalController.all.count == 1 {
+            WorkspaceStore.shared.saveCurrentSession()
+        }
         WorkspaceStore.shared.unregister(self)
 
         // If we remove a window, we reset the cascade point to the key window so that

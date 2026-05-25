@@ -7,6 +7,30 @@ private struct GitBranchCacheEntry {
     let createdAt: Date
 }
 
+private struct PersistedWorkspaceSession: Codable {
+    let version: Int
+    let savedAt: Date
+    let groups: [PersistedWorkspaceGroup]
+}
+
+private struct PersistedWorkspaceGroup: Codable {
+    let id: UUID
+    let workspaces: [PersistedWorkspace]
+    let activeWorkspaceID: UUID
+}
+
+private struct PersistedWorkspace: Codable {
+    let id: UUID
+    let name: String
+    let tabs: [PersistedWorkspaceTab]
+    let activeTabWindowID: UUID?
+}
+
+private struct PersistedWorkspaceTab: Codable {
+    let id: UUID
+    let workingDirectory: String?
+}
+
 enum WorkspaceAgentStatus: Equatable {
     case working(Character)
     case attention
@@ -35,6 +59,8 @@ final class WorkspaceStore: ObservableObject {
     ]
 
     private let gitBranchCacheLifetime: TimeInterval = 5
+
+    private static let persistedSessionDefaultsKey = "WorkspacePersistedSession"
 
     private init() {}
 
@@ -601,6 +627,123 @@ final class WorkspaceStore: ObservableObject {
 
         group.workspaces[workspaceIndex].tabWindowIDs = newTabWindowIDs
         groups[groupID] = group
+    }
+
+    func restoreSessionIfAvailable(ghostty: Ghostty.App) -> Bool {
+        guard TerminalController.all.isEmpty else { return false }
+        guard let session = loadPersistedSession() else { return false }
+        guard let persistedGroup = session.groups.first else { return false }
+        guard persistedGroup.workspaces.flatMap(\.tabs).first != nil else {
+            groups[persistedGroup.id] = WorkspaceGroup(
+                id: persistedGroup.id,
+                workspaces: persistedGroup.workspaces.map { workspace in
+                    Workspace(id: workspace.id, name: workspace.name)
+                },
+                activeWorkspaceID: persistedGroup.activeWorkspaceID)
+            return true
+        }
+
+        var firstController: TerminalController?
+        for persistedWorkspace in persistedGroup.workspaces {
+            for persistedTab in persistedWorkspace.tabs {
+                var config = Ghostty.SurfaceConfiguration()
+                if let workingDirectory = usableWorkingDirectory(persistedTab.workingDirectory) {
+                    config.workingDirectory = workingDirectory
+                }
+
+                if firstController == nil {
+                    firstController = TerminalController.newWindow(
+                        ghostty,
+                        withBaseConfig: config,
+                        workspaceGroupID: persistedGroup.id,
+                        workspaceID: persistedWorkspace.id,
+                        workspaceTabID: persistedTab.id)
+                } else {
+                    _ = TerminalController.newTab(
+                        ghostty,
+                        from: firstController?.window,
+                        withBaseConfig: config,
+                        workspaceID: persistedWorkspace.id,
+                        workspaceTabID: persistedTab.id)
+                }
+            }
+        }
+
+        DispatchQueue.main.async {
+            self.applyPersistedMetadata(persistedGroup)
+            if let firstController {
+                self.activateWorkspace(persistedGroup.activeWorkspaceID, in: persistedGroup.id, from: firstController)
+            }
+        }
+        return true
+    }
+
+    func saveCurrentSession() {
+        guard !groups.isEmpty || !TerminalController.all.isEmpty else { return }
+
+        let persistedGroups = groups.values
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+            .map { group in
+                PersistedWorkspaceGroup(
+                    id: group.id,
+                    workspaces: group.workspaces.map { workspace in
+                        PersistedWorkspace(
+                            id: workspace.id,
+                            name: workspace.name,
+                            tabs: workspace.tabWindowIDs.map { tabWindowID in
+                                PersistedWorkspaceTab(
+                                    id: tabWindowID,
+                                    workingDirectory: controllersByTabWindowID[tabWindowID]?.value.flatMap { controller in
+                                        currentWorkingDirectory(for: controller)
+                                    })
+                            },
+                            activeTabWindowID: workspace.activeTabWindowID)
+                    },
+                    activeWorkspaceID: group.activeWorkspaceID)
+            }
+        let session = PersistedWorkspaceSession(version: 1, savedAt: Date(), groups: persistedGroups)
+        guard let data = try? JSONEncoder().encode(session) else { return }
+        UserDefaults.ghostty.set(data, forKey: Self.persistedSessionDefaultsKey)
+    }
+
+    private func loadPersistedSession() -> PersistedWorkspaceSession? {
+        guard let data = UserDefaults.ghostty.data(forKey: Self.persistedSessionDefaultsKey) else { return nil }
+        guard let session = try? JSONDecoder().decode(PersistedWorkspaceSession.self, from: data) else { return nil }
+        guard session.version == 1 else { return nil }
+        return session
+    }
+
+    private func applyPersistedMetadata(_ persistedGroup: PersistedWorkspaceGroup) {
+        let restoredWorkspaces = persistedGroup.workspaces.map { persistedWorkspace in
+            Workspace(
+                id: persistedWorkspace.id,
+                name: persistedWorkspace.name,
+                tabWindowIDs: persistedWorkspace.tabs.map(\.id),
+                activeTabWindowID: persistedWorkspace.activeTabWindowID)
+        }
+        groups[persistedGroup.id] = WorkspaceGroup(
+            id: persistedGroup.id,
+            workspaces: restoredWorkspaces,
+            activeWorkspaceID: persistedGroup.activeWorkspaceID)
+    }
+
+    private func currentWorkingDirectory(for controller: TerminalController) -> String? {
+        if let pwd = controller.focusedSurface?.pwd, !pwd.isEmpty {
+            return pwd
+        }
+
+        return controller.surfaceTree.first { surface in
+            guard let pwd = surface.pwd else { return false }
+            return !pwd.isEmpty
+        }?.pwd
+    }
+
+    private func usableWorkingDirectory(_ workingDirectory: String?) -> String? {
+        guard let workingDirectory, !workingDirectory.isEmpty else { return nil }
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: workingDirectory, isDirectory: &isDirectory) else { return nil }
+        guard isDirectory.boolValue else { return nil }
+        return workingDirectory
     }
 
     func activateWorkspace(_ workspaceID: UUID, in groupID: UUID, from source: TerminalController?) {

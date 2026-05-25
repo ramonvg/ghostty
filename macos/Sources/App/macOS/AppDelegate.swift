@@ -352,7 +352,9 @@ class AppDelegate: NSObject,
             //   - if we're restoring from persisted state
             if TerminalController.all.isEmpty && derivedConfig.initialWindow {
                 undoManager.disableUndoRegistration()
-                _ = TerminalController.newWindow(ghostty)
+                if !WorkspaceStore.shared.restoreSessionIfAvailable(ghostty: ghostty) {
+                    _ = TerminalController.newWindow(ghostty)
+                }
                 undoManager.enableUndoRegistration()
             }
         }
@@ -408,6 +410,8 @@ class AppDelegate: NSObject,
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        WorkspaceStore.shared.saveCurrentSession()
+
         // We have no notifications we want to persist after death,
         // so remove them all now. In the future we may want to be
         // more selective and only remove surface-targeted notifications.
@@ -432,8 +436,10 @@ class AppDelegate: NSObject,
         // but I haven't seen it happen in releases. I'm unsure why.
         guard applicationHasBecomeActive else { return true }
 
-        // No visible windows, open a new one.
-        _ = TerminalController.newWindow(ghostty)
+        // No visible windows, restore the saved workspace setup or open a new one.
+        if !WorkspaceStore.shared.restoreSessionIfAvailable(ghostty: ghostty) {
+            _ = TerminalController.newWindow(ghostty)
+        }
         return false
     }
 
