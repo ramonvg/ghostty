@@ -54,6 +54,7 @@ final class WorkspaceStore: ObservableObject {
     private var suppressedRestoredAgentTitles: [UUID: Set<String>] = [:]
     private var gitBranchCache: [String: GitBranchCacheEntry] = [:]
     private var gitBranchLookupsInFlight: Set<String> = []
+    private var agentBridgeCancellable: AnyCancellable?
     private var frameSyncInProgress = false
 
     private static let loadingSpinnerFrames: Set<Character> = [
@@ -64,7 +65,12 @@ final class WorkspaceStore: ObservableObject {
 
     private static let persistedSessionDefaultsKey = "WorkspacePersistedSession"
 
-    private init() {}
+    private init() {
+        agentBridgeCancellable = AgentBridgeStore.shared.$statesBySessionID
+            .sink { [weak self] _ in
+                self?.refreshWorkspaceMetadata()
+            }
+    }
 
     @discardableResult
     func ensureWorkspace(_ workspaceID: UUID?, in groupID: UUID) -> UUID {
@@ -238,7 +244,7 @@ final class WorkspaceStore: ObservableObject {
         suppressAgentTitles(for: controller)
 
         if let surfaceID = focusedSurface?.id.uuidString {
-            GhosttyAgentBridge.acknowledgeAttention(forSurfaceID: surfaceID)
+            AgentBridgeStore.shared.acknowledgeAttention(forSurfaceID: surfaceID)
         }
 
         metadataRevision += 1
@@ -246,8 +252,18 @@ final class WorkspaceStore: ObservableObject {
 
     func workspaceAgentStatus(in groupID: UUID, workspaceID: UUID) -> WorkspaceAgentStatus {
         var foundAttention = false
+        let workspaceControllers = controllers(in: groupID, workspaceID: workspaceID)
 
-        for controller in controllers(in: groupID, workspaceID: workspaceID) {
+        switch workspaceStatus(from: agentBridgeStatus(for: workspaceControllers)) {
+        case .working(let spinner):
+            return .working(spinner)
+        case .attention:
+            foundAttention = true
+        case .none:
+            break
+        }
+
+        for controller in workspaceControllers {
             if controllerNeedsAgentAttention.contains(controller.workspaceTabID) {
                 foundAttention = true
             }
@@ -335,6 +351,27 @@ final class WorkspaceStore: ObservableObject {
         }
 
         return .none
+    }
+
+    private func agentBridgeStatus(for controller: TerminalController) -> AgentBridgeWorkspaceStatus {
+        AgentBridgeStore.shared.workspaceStatus(forSurfaceIDs: controller.surfaceTree.map { $0.id.uuidString })
+    }
+
+    private func agentBridgeStatus(for controllers: [TerminalController]) -> AgentBridgeWorkspaceStatus {
+        AgentBridgeStore.shared.workspaceStatus(forSurfaceIDs: controllers.flatMap { controller in
+            controller.surfaceTree.map { $0.id.uuidString }
+        })
+    }
+
+    private func workspaceStatus(from bridgeStatus: AgentBridgeWorkspaceStatus) -> WorkspaceAgentStatus {
+        switch bridgeStatus {
+        case .working(let spinner):
+            return .working(spinner)
+        case .attention:
+            return .attention
+        case .none:
+            return .none
+        }
     }
 
     func controllers(in groupID: UUID) -> [TerminalController] {
@@ -528,6 +565,28 @@ final class WorkspaceStore: ObservableObject {
                 controllerHadWorkingAgent.remove(tabWindowID)
                 controllerNeedsAgentAttention.remove(tabWindowID)
                 continue
+            }
+
+            switch agentBridgeStatus(for: controller) {
+            case .working:
+                controllerHadWorkingAgent.insert(tabWindowID)
+                controllerNeedsAgentAttention.remove(tabWindowID)
+                continue
+
+            case .attention:
+                controllerHadWorkingAgent.remove(tabWindowID)
+                if isControllerFocusedForAgentAttention(controller) {
+                    if let surfaceID = controller.focusedSurface?.id.uuidString {
+                        AgentBridgeStore.shared.acknowledgeAttention(forSurfaceID: surfaceID)
+                    }
+                    suppressAgentTitles(for: controller)
+                } else {
+                    controllerNeedsAgentAttention.insert(tabWindowID)
+                }
+                continue
+
+            case .none:
+                break
             }
 
             let snapshot = agentSnapshot(for: controller)

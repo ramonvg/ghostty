@@ -46,21 +46,18 @@ private struct TodoMetadata: Decodable {
 private final class TodoSidebarModel: ObservableObject {
     @Published private(set) var cwdURL: URL?
     @Published private(set) var todos: [TodoItem] = []
-    @Published private(set) var bridgeStatesBySessionID: [String: GhosttyAgentBridgeState] = [:]
 
     func reload(for cwdURL: URL?) {
         self.cwdURL = cwdURL
 
         guard let cwdURL else {
             todos = []
-            reloadBridgeStates()
             return
         }
 
         let todoDirectoryURL = cwdURL.appendingPathComponent(".pi/todos", isDirectory: true)
         guard FileManager.default.fileExists(atPath: todoDirectoryURL.path) else {
             todos = []
-            reloadBridgeStates()
             return
         }
 
@@ -79,7 +76,6 @@ private final class TodoSidebarModel: ObservableObject {
                     return leftTodo.title.localizedCaseInsensitiveCompare(rightTodo.title) == .orderedAscending
                 }
             }
-        reloadBridgeStates()
     }
 
     func close(todo: TodoItem) {
@@ -106,31 +102,6 @@ private final class TodoSidebarModel: ObservableObject {
         let updatedContents = fileContents.replacingCharacters(in: jsonRange, with: updatedJSONString)
         try? updatedContents.write(to: todo.fileURL, atomically: true, encoding: .utf8)
         reload(for: cwdURL)
-    }
-
-    func reloadBridgeStates() {
-        let bridgeDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".pi/agent/ghostty/sessions", isDirectory: true)
-        let bridgeFileURLs = (try? FileManager.default.contentsOfDirectory(
-            at: bridgeDirectoryURL,
-            includingPropertiesForKeys: nil)) ?? []
-        let decoder = JSONDecoder()
-        let staleCutoffDate = Date().addingTimeInterval(-5 * 60)
-        let dateFormatter = ISO8601DateFormatter()
-        dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-        bridgeStatesBySessionID = Dictionary(uniqueKeysWithValues: bridgeFileURLs
-            .filter { $0.pathExtension == "json" }
-            .compactMap { fileURL -> GhosttyAgentBridgeState? in
-                guard let data = try? Data(contentsOf: fileURL),
-                      let state = try? decoder.decode(GhosttyAgentBridgeState.self, from: data),
-                      let updatedAt = dateFormatter.date(from: state.updatedAt),
-                      updatedAt >= staleCutoffDate else {
-                    return nil
-                }
-                return state
-            }
-            .map { ($0.sessionID, $0) })
     }
 
     private static func todoItem(from fileURL: URL) -> TodoItem? {
@@ -219,9 +190,10 @@ struct TodoSidebarView: View {
 
     @AppStorage("TodoSidebarWidth") private var storedWidth: Double = 220
     @StateObject private var model = TodoSidebarModel()
+    @ObservedObject private var agentBridgeStore = AgentBridgeStore.shared
     @State private var resizeStartWidth: CGFloat?
 
-    private let bridgeRefreshTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    private let todoRefreshTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     private var width: CGFloat {
         Self.clampedWidth(CGFloat(storedWidth))
@@ -281,7 +253,7 @@ struct TodoSidebarView: View {
         .onChange(of: cwdURL) { newValue in
             model.reload(for: newValue)
         }
-        .onReceive(bridgeRefreshTimer) { _ in
+        .onReceive(todoRefreshTimer) { _ in
             model.reload(for: cwdURL)
         }
     }
@@ -430,18 +402,15 @@ struct TodoSidebarView: View {
         focusedSurface?.window?.makeFirstResponder(focusedSurface)
     }
 
-    private func bridgeState(for todo: TodoItem) -> GhosttyAgentBridgeState? {
-        if let assignedToSession = todo.assignedToSession,
-           let state = model.bridgeStatesBySessionID[assignedToSession] {
+    private func bridgeState(for todo: TodoItem) -> AgentBridgeState? {
+        if let state = agentBridgeStore.state(forSessionID: todo.assignedToSession) {
             return state
         }
 
-        return model.bridgeStatesBySessionID.values.first { state in
-            state.todoID == todo.id
-        }
+        return agentBridgeStore.state(forTodoID: todo.id)
     }
 
-    private func bridgeStatusIcon(_ state: GhosttyAgentBridgeState) -> String? {
+    private func bridgeStatusIcon(_ state: AgentBridgeState) -> String? {
         switch state.status {
         case "working":
             return "⠿"
@@ -454,7 +423,7 @@ struct TodoSidebarView: View {
         }
     }
 
-    private func isFocusedBridgeState(_ state: GhosttyAgentBridgeState) -> Bool {
+    private func isFocusedBridgeState(_ state: AgentBridgeState) -> Bool {
         guard let focusedSurface,
               let ghosttySurfaceID = state.ghosttySurfaceID else { return false }
 
