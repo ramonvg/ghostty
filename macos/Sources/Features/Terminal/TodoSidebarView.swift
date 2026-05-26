@@ -455,41 +455,45 @@ struct TodoSidebarView: View {
         guard let state = bridgeState(for: todo) else { return }
         let sessionPrefix = String(state.sessionID.prefix(8))
         let todoID = todo.displayID
-        let terminalSurfaces = NSApp.windows.compactMap { window -> (NSWindow, TerminalController)? in
-            guard let controller = window.windowController as? TerminalController else { return nil }
-            return (window, controller)
-        }
+        let terminalControllers = TerminalController.all
 
         if let ghosttySurfaceID = state.ghosttySurfaceID,
-           focusFirstSurface(in: terminalSurfaces, where: { surface in
+           focusFirstSurface(in: terminalControllers, where: { surface in
                surface.id.uuidString == ghosttySurfaceID
            }) {
             return
         }
 
-        if focusFirstSurface(in: terminalSurfaces, where: { surface in
+        if focusFirstSurface(in: terminalControllers, where: { surface in
             surface.title.contains(sessionPrefix) || surface.title.contains(todoID)
         }) {
             return
         }
 
-        if focusFirstSurface(in: terminalSurfaces, where: { surface in
+        if focusFirstSurface(in: terminalControllers, where: { surface in
             surface.pwd == state.cwd && surface.title.contains("π")
         }) {
             return
         }
 
-        _ = focusFirstSurface(in: terminalSurfaces, where: { surface in
+        _ = focusFirstSurface(in: terminalControllers, where: { surface in
             surface.pwd == state.cwd
         })
     }
 
     private func focusFirstSurface(
-        in terminalSurfaces: [(NSWindow, TerminalController)],
+        in terminalControllers: [TerminalController],
         where matchesSurface: (Ghostty.SurfaceView) -> Bool
     ) -> Bool {
-        for (window, controller) in terminalSurfaces {
+        let sourceController = focusedSurface?.window?.windowController as? TerminalController
+
+        for controller in terminalControllers {
             for surface in controller.surfaceTree where matchesSurface(surface) {
+                if WorkspaceStore.shared.present(surface: surface, from: sourceController ?? controller) {
+                    return true
+                }
+
+                guard let window = controller.window else { return false }
                 if window.isMiniaturized {
                     window.deminiaturize(nil)
                 }

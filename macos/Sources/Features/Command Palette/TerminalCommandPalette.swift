@@ -189,7 +189,9 @@ struct TerminalCommandPaletteView: View {
 
     /// Commands for jumping to other terminal surfaces.
     private var jumpOptions: [CommandOption] {
-        TerminalController.all.flatMap { controller -> [CommandOption] in
+        let sourceController = surfaceView.window?.windowController as? TerminalController
+
+        return TerminalController.all.flatMap { controller -> [CommandOption] in
             guard let window = controller.window else { return [] }
 
             let color = (window as? TerminalWindow)?.tabColor
@@ -219,6 +221,10 @@ struct TerminalCommandPaletteView: View {
                     leadingColor: displayColor?.displayColor.map { Color($0) },
                     sortKey: AnySortKey(ObjectIdentifier(surface))
                 ) {
+                    if WorkspaceStore.shared.present(surface: surface, from: sourceController) {
+                        return
+                    }
+
                     NotificationCenter.default.post(
                         name: Ghostty.Notification.ghosttyPresentTerminal,
                         object: surface

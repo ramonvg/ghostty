@@ -393,6 +393,50 @@ final class WorkspaceStore: ObservableObject {
         return workspace.tabWindowIDs.compactMap { controllersByTabWindowID[$0]?.value }
     }
 
+    @discardableResult
+    func present(surface: Ghostty.SurfaceView, from source: TerminalController? = nil) -> Bool {
+        guard let targetController = controller(containing: surface),
+              let targetWindow = targetController.window
+        else { return false }
+
+        recordActiveTabWithoutChangingWorkspace(targetController)
+
+        if activeWorkspaceID(in: targetController.workspaceGroupID) != targetController.workspaceID ||
+            !targetWindow.isVisible {
+            activateWorkspace(
+                targetController.workspaceID,
+                in: targetController.workspaceGroupID,
+                from: source ?? targetController)
+        } else {
+            if targetWindow.isMiniaturized {
+                targetWindow.deminiaturize(nil)
+            }
+            targetWindow.makeKeyAndOrderFront(nil)
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        Ghostty.moveFocus(to: surface)
+        Ghostty.moveFocus(to: surface, delay: 0.1)
+        surface.highlight()
+        return true
+    }
+
+    private func controller(containing surface: Ghostty.SurfaceView) -> TerminalController? {
+        controllersByTabWindowID.values
+            .compactMap(\.value)
+            .first { $0.surfaceTree.contains(surface) } ??
+            TerminalController.all.first { $0.surfaceTree.contains(surface) }
+    }
+
+    private func recordActiveTabWithoutChangingWorkspace(_ controller: TerminalController) {
+        guard var group = groups[controller.workspaceGroupID],
+              let workspaceIndex = group.workspaces.firstIndex(where: { $0.id == controller.workspaceID })
+        else { return }
+
+        group.workspaces[workspaceIndex].activeTabWindowID = controller.workspaceTabID
+        groups[controller.workspaceGroupID] = group
+    }
+
     func isControllerVisibleInActiveWorkspace(_ controller: TerminalController) -> Bool {
         guard let activeWorkspaceID = activeWorkspaceID(in: controller.workspaceGroupID) else { return true }
         return controller.workspaceID == activeWorkspaceID && (controller.window?.isVisible ?? false)

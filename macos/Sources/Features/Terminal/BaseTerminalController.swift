@@ -738,6 +738,10 @@ class BaseTerminalController: NSWindowController,
         guard let target = notification.object as? Ghostty.SurfaceView else { return }
         guard surfaceTree.contains(target) else { return }
 
+        if WorkspaceStore.shared.present(surface: target, from: self as? TerminalController) {
+            return
+        }
+
         // Bring the window to front and focus the surface.
         window?.makeKeyAndOrderFront(nil)
 
