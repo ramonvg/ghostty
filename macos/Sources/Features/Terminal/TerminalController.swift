@@ -1767,6 +1767,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     override func windowDidBecomeKey(_ notification: Notification) {
         super.windowDidBecomeKey(notification)
         WorkspaceStore.shared.recordActiveTab(self)
+        WorkspaceStore.shared.acknowledgeAgentAttention(for: self, focusedSurface: focusedSurface)
         self.relabelTabs()
         self.fixTabBar()
         terminalViewContainer?.updateGlassTintOverlay(isKeyWindow: true)
@@ -1796,6 +1797,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     func windowDidBecomeMain(_ notification: Notification) {
         WorkspaceStore.shared.recordActiveTab(self)
+        WorkspaceStore.shared.acknowledgeAgentAttention(for: self, focusedSurface: focusedSurface)
 
         // Whenever we get focused, use that as our last window position for
         // restart. This differs from Terminal.app but matches iTerm2 behavior

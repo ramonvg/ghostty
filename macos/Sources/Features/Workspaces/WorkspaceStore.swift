@@ -536,12 +536,28 @@ final class WorkspaceStore: ObservableObject {
                 controllerNeedsAgentAttention.remove(tabWindowID)
             } else if snapshot.hasAttention || (controllerHadWorkingAgent.contains(tabWindowID) && snapshot.hasPiTitle) {
                 controllerHadWorkingAgent.remove(tabWindowID)
-                controllerNeedsAgentAttention.insert(tabWindowID)
+                if isControllerFocusedForAgentAttention(controller) {
+                    suppressAgentTitles(for: controller)
+                } else {
+                    controllerNeedsAgentAttention.insert(tabWindowID)
+                }
             } else if !snapshot.hasPiTitle {
                 controllerHadWorkingAgent.remove(tabWindowID)
                 controllerNeedsAgentAttention.remove(tabWindowID)
             }
         }
+    }
+
+    private func isControllerFocusedForAgentAttention(_ controller: TerminalController) -> Bool {
+        guard let window = controller.window else { return false }
+        guard isControllerVisibleInActiveWorkspace(controller) else { return false }
+
+        if window.isKeyWindow || window.isMainWindow {
+            return true
+        }
+
+        guard let selectedWindow = window.tabGroup?.selectedWindow else { return false }
+        return selectedWindow == window && (NSApp.keyWindow == window || NSApp.mainWindow == window)
     }
 
     private func agentSnapshot(for controller: TerminalController) -> (
