@@ -88,9 +88,13 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                     createWorkspace: createWorkspace,
                     closeWorkspace: closeWorkspace)
                 terminalSplitTreeView
+                TodoSidebarView(ghostty: ghostty, cwdURL: pwdURL, focusedSurface: lastFocusedSurface?.value)
             }
         } else {
-            terminalSplitTreeView
+            HStack(spacing: 0) {
+                terminalSplitTreeView
+                TodoSidebarView(ghostty: ghostty, cwdURL: pwdURL, focusedSurface: lastFocusedSurface?.value)
+            }
         }
 #else
         terminalSplitTreeView

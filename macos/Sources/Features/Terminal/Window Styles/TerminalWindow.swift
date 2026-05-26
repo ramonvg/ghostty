@@ -812,7 +812,7 @@ extension TerminalWindow {
 
         for workspace in workspaces where workspace.id != target.workspaceID {
             let item = NSMenuItem(
-                title: workspace.name,
+                title: WorkspaceStore.shared.workspaceDisplayName(in: target.workspaceGroupID, workspaceID: workspace.id),
                 action: #selector(TerminalWindow.moveTabToWorkspaceFromContextMenu(_:)),
                 keyEquivalent: "")
             item.target = self

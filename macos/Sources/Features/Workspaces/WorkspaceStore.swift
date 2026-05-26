@@ -21,7 +21,7 @@ private struct PersistedWorkspaceGroup: Codable {
 
 private struct PersistedWorkspace: Codable {
     let id: UUID
-    let name: String
+    let name: String?
     let tabs: [PersistedWorkspaceTab]
     let activeTabWindowID: UUID?
 }
@@ -29,6 +29,7 @@ private struct PersistedWorkspace: Codable {
 private struct PersistedWorkspaceTab: Codable {
     let id: UUID
     let workingDirectory: String?
+    let terminalState: TerminalRestorableState.InternalState<Ghostty.SurfaceView>?
 }
 
 enum WorkspaceAgentStatus: Equatable {
@@ -50,6 +51,7 @@ final class WorkspaceStore: ObservableObject {
     private var surfacePwdCancellables: [UUID: Set<AnyCancellable>] = [:]
     private var controllerHadWorkingAgent: Set<UUID> = []
     private var controllerNeedsAgentAttention: Set<UUID> = []
+    private var suppressedRestoredAgentTitles: [UUID: Set<String>] = [:]
     private var gitBranchCache: [String: GitBranchCacheEntry] = [:]
     private var gitBranchLookupsInFlight: Set<String> = []
     private var frameSyncInProgress = false
@@ -69,9 +71,7 @@ final class WorkspaceStore: ObservableObject {
         if var group = groups[groupID] {
             if let workspaceID {
                 if !group.workspaces.contains(where: { $0.id == workspaceID }) {
-                    group.workspaces.append(Workspace(
-                        id: workspaceID,
-                        name: defaultWorkspaceName(at: group.workspaces.count)))
+                    group.workspaces.append(Workspace(id: workspaceID))
                     groups[groupID] = group
                 }
 
@@ -84,7 +84,7 @@ final class WorkspaceStore: ObservableObject {
         let resolvedWorkspaceID = workspaceID ?? UUID()
         groups[groupID] = WorkspaceGroup(
             id: groupID,
-            workspaces: [Workspace(id: resolvedWorkspaceID, name: defaultWorkspaceName(at: 0))],
+            workspaces: [Workspace(id: resolvedWorkspaceID)],
             activeWorkspaceID: resolvedWorkspaceID)
         return resolvedWorkspaceID
     }
@@ -117,6 +117,7 @@ final class WorkspaceStore: ObservableObject {
         surfacePwdCancellables[controller.workspaceTabID] = nil
         controllerHadWorkingAgent.remove(controller.workspaceTabID)
         controllerNeedsAgentAttention.remove(controller.workspaceTabID)
+        suppressedRestoredAgentTitles[controller.workspaceTabID] = nil
 
         guard var group = groups[controller.workspaceGroupID] else { return }
         for workspaceIndex in group.workspaces.indices {
@@ -146,9 +147,10 @@ final class WorkspaceStore: ObservableObject {
         guard var group = groups[groupID] else { return UUID() }
 
         let workspaceID = UUID()
+        let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         group.workspaces.append(Workspace(
             id: workspaceID,
-            name: name ?? defaultWorkspaceName(at: group.workspaces.count)))
+            name: trimmedName?.isEmpty == false ? trimmedName : nil))
         groups[groupID] = group
         return workspaceID
     }
@@ -208,18 +210,38 @@ final class WorkspaceStore: ObservableObject {
         groups[groupID]?.activeWorkspaceID
     }
 
-    func workspaceSubtitle(in groupID: UUID, workspaceID: UUID) -> String? {
-        guard let pwd = sharedPWD(in: groupID, workspaceID: workspaceID) else { return nil }
+    func workspaceDisplayName(in groupID: UUID, workspaceID: UUID) -> String {
+        guard let group = groups[groupID],
+              let workspaceIndex = group.workspaces.firstIndex(where: { $0.id == workspaceID })
+        else { return defaultWorkspaceName(at: 0) }
 
-        scheduleGitBranchLookupIfNeeded(for: pwd)
-
-        let folderName = URL(fileURLWithPath: pwd).lastPathComponent
-        let displayFolderName = folderName.isEmpty ? pwd : folderName
-        guard let branch = gitBranchCache[pwd]?.branch, !branch.isEmpty else {
-            return displayFolderName
+        if let name = group.workspaces[workspaceIndex].name, !name.isEmpty {
+            return name
         }
 
-        return "\(displayFolderName) · \(branch)"
+        if let projectName = workspaceProjectName(in: groupID, workspaceID: workspaceID) {
+            return projectName
+        }
+
+        return defaultWorkspaceName(at: workspaceIndex)
+    }
+
+    func workspaceSubtitle(in groupID: UUID, workspaceID: UUID) -> String? {
+        guard let pwd = sharedPWD(in: groupID, workspaceID: workspaceID) else { return nil }
+        guard let branch = workspaceGitBranch(for: pwd) else { return nil }
+        return branch
+    }
+
+    func acknowledgeAgentAttention(for controller: TerminalController, focusedSurface: Ghostty.SurfaceView?) {
+        controllerHadWorkingAgent.remove(controller.workspaceTabID)
+        controllerNeedsAgentAttention.remove(controller.workspaceTabID)
+        suppressAgentTitles(for: controller)
+
+        if let surfaceID = focusedSurface?.id.uuidString {
+            GhosttyAgentBridge.acknowledgeAttention(forSurfaceID: surfaceID)
+        }
+
+        metadataRevision += 1
     }
 
     func workspaceAgentStatus(in groupID: UUID, workspaceID: UUID) -> WorkspaceAgentStatus {
@@ -230,11 +252,8 @@ final class WorkspaceStore: ObservableObject {
                 foundAttention = true
             }
 
-            if controller.bell {
-                foundAttention = true
-            }
-
-            if let windowTitle = controller.window?.title {
+            if let windowTitle = controller.window?.title,
+               !shouldSuppressRestoredAgentTitle(windowTitle, for: controller) {
                 switch Self.agentStatus(in: windowTitle) {
                 case .working(let spinner):
                     return .working(spinner)
@@ -246,9 +265,7 @@ final class WorkspaceStore: ObservableObject {
             }
 
             for surface in controller.surfaceTree {
-                if surface.bell {
-                    foundAttention = true
-                }
+                guard !shouldSuppressRestoredAgentTitle(surface.title, for: controller) else { continue }
 
                 switch Self.agentStatus(in: surface.title) {
                 case .working(let spinner):
@@ -262,6 +279,33 @@ final class WorkspaceStore: ObservableObject {
         }
 
         return foundAttention ? .attention : .none
+    }
+
+    private func suppressRestoredAgentTitles(for controller: TerminalController) {
+        suppressAgentTitles(for: controller)
+    }
+
+    private func suppressAgentTitles(for controller: TerminalController) {
+        let candidateTitles = [controller.window?.title, controller.titleOverride].compactMap { $0 } + controller.surfaceTree.map(\.title)
+        let agentTitles = Set(candidateTitles.filter { title in
+            switch Self.agentStatus(in: title) {
+            case .working, .attention:
+                return true
+            case .none:
+                return false
+            }
+        })
+
+        controllerHadWorkingAgent.remove(controller.workspaceTabID)
+        controllerNeedsAgentAttention.remove(controller.workspaceTabID)
+        guard !agentTitles.isEmpty else { return }
+        var suppressedTitles = suppressedRestoredAgentTitles[controller.workspaceTabID] ?? []
+        suppressedTitles.formUnion(agentTitles)
+        suppressedRestoredAgentTitles[controller.workspaceTabID] = suppressedTitles
+    }
+
+    private func shouldSuppressRestoredAgentTitle(_ title: String, for controller: TerminalController) -> Bool {
+        suppressedRestoredAgentTitles[controller.workspaceTabID]?.contains(title) == true
     }
 
     private static func agentStatus(in title: String) -> WorkspaceAgentStatus {
@@ -510,6 +554,8 @@ final class WorkspaceStore: ObservableObject {
         var hasPiTitle = false
 
         func record(title: String) {
+            guard !shouldSuppressRestoredAgentTitle(title, for: controller) else { return }
+
             let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmedTitle.contains("π") else { return }
             hasPiTitle = true
@@ -541,6 +587,18 @@ final class WorkspaceStore: ObservableObject {
         }
 
         return (hasWorking, hasAttention, hasPiTitle)
+    }
+
+    private func workspaceProjectName(in groupID: UUID, workspaceID: UUID) -> String? {
+        guard let pwd = sharedPWD(in: groupID, workspaceID: workspaceID) else { return nil }
+        let folderName = URL(fileURLWithPath: pwd).lastPathComponent
+        return folderName.isEmpty ? pwd : folderName
+    }
+
+    private func workspaceGitBranch(for pwd: String) -> String? {
+        scheduleGitBranchLookupIfNeeded(for: pwd)
+        guard let branch = gitBranchCache[pwd]?.branch, !branch.isEmpty else { return nil }
+        return branch
     }
 
     private func sharedPWD(in groupID: UUID, workspaceID: UUID) -> String? {
@@ -648,8 +706,8 @@ final class WorkspaceStore: ObservableObject {
         guard persistedGroup.workspaces.flatMap(\.tabs).first != nil else {
             groups[persistedGroup.id] = WorkspaceGroup(
                 id: persistedGroup.id,
-                workspaces: persistedGroup.workspaces.map { workspace in
-                    Workspace(id: workspace.id, name: workspace.name)
+                workspaces: persistedGroup.workspaces.enumerated().map { index, workspace in
+                    Workspace(id: workspace.id, name: normalizedPersistedWorkspaceName(workspace.name, at: index))
                 },
                 activeWorkspaceID: persistedGroup.activeWorkspaceID)
             return true
@@ -658,25 +716,41 @@ final class WorkspaceStore: ObservableObject {
         var firstController: TerminalController?
         for persistedWorkspace in persistedGroup.workspaces {
             for persistedTab in persistedWorkspace.tabs {
-                var config = Ghostty.SurfaceConfiguration()
-                if let workingDirectory = usableWorkingDirectory(persistedTab.workingDirectory) {
-                    config.workingDirectory = workingDirectory
-                }
-
-                if firstController == nil {
-                    firstController = TerminalController.newWindow(
+                let restoredController: TerminalController
+                if let terminalState = persistedTab.terminalState {
+                    restoredController = TerminalController.restoreWorkspaceTab(
                         ghostty,
-                        withBaseConfig: config,
+                        from: firstController?.window,
+                        withTerminalState: terminalState,
                         workspaceGroupID: persistedGroup.id,
                         workspaceID: persistedWorkspace.id,
                         workspaceTabID: persistedTab.id)
+                    suppressRestoredAgentTitles(for: restoredController)
                 } else {
-                    _ = TerminalController.newTab(
-                        ghostty,
-                        from: firstController?.window,
-                        withBaseConfig: config,
-                        workspaceID: persistedWorkspace.id,
-                        workspaceTabID: persistedTab.id)
+                    var config = Ghostty.SurfaceConfiguration()
+                    if let workingDirectory = usableWorkingDirectory(persistedTab.workingDirectory) {
+                        config.workingDirectory = workingDirectory
+                    }
+
+                    if firstController == nil {
+                        restoredController = TerminalController.newWindow(
+                            ghostty,
+                            withBaseConfig: config,
+                            workspaceGroupID: persistedGroup.id,
+                            workspaceID: persistedWorkspace.id,
+                            workspaceTabID: persistedTab.id)
+                    } else {
+                        restoredController = TerminalController.newTab(
+                            ghostty,
+                            from: firstController?.window,
+                            withBaseConfig: config,
+                            workspaceID: persistedWorkspace.id,
+                            workspaceTabID: persistedTab.id) ?? firstController!
+                    }
+                }
+
+                if firstController == nil {
+                    firstController = restoredController
                 }
             }
         }
@@ -707,13 +781,16 @@ final class WorkspaceStore: ObservableObject {
                                     id: tabWindowID,
                                     workingDirectory: controllersByTabWindowID[tabWindowID]?.value.flatMap { controller in
                                         currentWorkingDirectory(for: controller)
+                                    },
+                                    terminalState: controllersByTabWindowID[tabWindowID]?.value.map { controller in
+                                        TerminalRestorableState.InternalState(from: controller)
                                     })
                             },
                             activeTabWindowID: workspace.activeTabWindowID)
                     },
                     activeWorkspaceID: group.activeWorkspaceID)
             }
-        let session = PersistedWorkspaceSession(version: 1, savedAt: Date(), groups: persistedGroups)
+        let session = PersistedWorkspaceSession(version: 2, savedAt: Date(), groups: persistedGroups)
         guard let data = try? JSONEncoder().encode(session) else { return }
         UserDefaults.ghostty.set(data, forKey: Self.persistedSessionDefaultsKey)
     }
@@ -721,15 +798,15 @@ final class WorkspaceStore: ObservableObject {
     private func loadPersistedSession() -> PersistedWorkspaceSession? {
         guard let data = UserDefaults.ghostty.data(forKey: Self.persistedSessionDefaultsKey) else { return nil }
         guard let session = try? JSONDecoder().decode(PersistedWorkspaceSession.self, from: data) else { return nil }
-        guard session.version == 1 else { return nil }
+        guard session.version == 1 || session.version == 2 else { return nil }
         return session
     }
 
     private func applyPersistedMetadata(_ persistedGroup: PersistedWorkspaceGroup) {
-        let restoredWorkspaces = persistedGroup.workspaces.map { persistedWorkspace in
+        let restoredWorkspaces = persistedGroup.workspaces.enumerated().map { index, persistedWorkspace in
             Workspace(
                 id: persistedWorkspace.id,
-                name: persistedWorkspace.name,
+                name: normalizedPersistedWorkspaceName(persistedWorkspace.name, at: index),
                 tabWindowIDs: persistedWorkspace.tabs.map(\.id),
                 activeTabWindowID: persistedWorkspace.activeTabWindowID)
         }
@@ -737,6 +814,12 @@ final class WorkspaceStore: ObservableObject {
             id: persistedGroup.id,
             workspaces: restoredWorkspaces,
             activeWorkspaceID: persistedGroup.activeWorkspaceID)
+    }
+
+    private func normalizedPersistedWorkspaceName(_ name: String?, at index: Int) -> String? {
+        guard let name else { return nil }
+        if name == "Default" || name == defaultWorkspaceName(at: index) { return nil }
+        return name
     }
 
     private func currentWorkingDirectory(for controller: TerminalController) -> String? {
@@ -898,7 +981,6 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func defaultWorkspaceName(at index: Int) -> String {
-        if index == 0 { return "Default" }
         return "Workspace \(index + 1)"
     }
 }

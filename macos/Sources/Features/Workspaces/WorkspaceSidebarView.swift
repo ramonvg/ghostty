@@ -131,7 +131,7 @@ struct WorkspaceSidebarView: View {
         if editingWorkspaceID == workspace.id {
             workspaceRowContent(workspace, index: index, isActive: isActive)
                 .contextMenu { workspaceContextMenu(workspace) }
-                .help(workspace.name)
+                .help(store.workspaceDisplayName(in: groupID, workspaceID: workspace.id))
         } else {
             Button {
                 activateWorkspace(workspace.id)
@@ -140,7 +140,7 @@ struct WorkspaceSidebarView: View {
             }
             .buttonStyle(.plain)
             .contextMenu { workspaceContextMenu(workspace) }
-            .help(workspace.name)
+            .help(store.workspaceDisplayName(in: groupID, workspaceID: workspace.id))
             .modifier(workspaceReorderModifier(workspace, index: index))
         }
     }
@@ -218,13 +218,14 @@ struct WorkspaceSidebarView: View {
     }
 
     private func workspaceDisplayName(_ workspace: Workspace) -> String {
+        let displayName = store.workspaceDisplayName(in: groupID, workspaceID: workspace.id)
         switch store.workspaceAgentStatus(in: groupID, workspaceID: workspace.id) {
         case .working(let spinner):
-            return "\(spinner) \(workspace.name)"
+            return "\(spinner) \(displayName)"
         case .attention:
-            return "🔔 \(workspace.name)"
+            return "🔔 \(displayName)"
         case .none:
-            return workspace.name
+            return displayName
         }
     }
 
@@ -238,7 +239,7 @@ struct WorkspaceSidebarView: View {
 
     private func beginRename(_ workspace: Workspace) {
         editingWorkspaceID = workspace.id
-        renameDraft = workspace.name
+        renameDraft = workspace.name ?? store.workspaceDisplayName(in: groupID, workspaceID: workspace.id)
         focusedRenameWorkspaceID = workspace.id
         DispatchQueue.main.async {
             focusedRenameWorkspaceID = workspace.id

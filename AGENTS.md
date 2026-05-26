@@ -64,6 +64,7 @@ This branch has local workspaces testing helpers for Ramon's macOS setup:
 - **Install side-by-side app (optimized):** `./scripts/workspaces-install-app.sh`
   - Builds `ReleaseFast`, copies the app to `/Applications/Ghostty-Workspaces.app`, changes the bundle name/id to `Ghostty Workspaces` / `com.ramonvg.ghostty-workspaces`, ad-hoc signs it, refreshes Launch Services, and opens it.
   - Use this when testing via Raycast/Dock without replacing `/Applications/Ghostty.app`.
+  - For this branch's rapid macOS UI iteration, run this after every implemented update so Ramon can immediately test the latest app.
 
 ## libghostty-vt
 

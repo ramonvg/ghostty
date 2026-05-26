@@ -3,13 +3,13 @@ import Foundation
 
 struct Workspace: Identifiable, Codable, Equatable {
     let id: UUID
-    var name: String
+    var name: String?
     var tabWindowIDs: [UUID]
     var activeTabWindowID: UUID?
 
     init(
         id: UUID = UUID(),
-        name: String,
+        name: String? = nil,
         tabWindowIDs: [UUID] = [],
         activeTabWindowID: UUID? = nil
     ) {

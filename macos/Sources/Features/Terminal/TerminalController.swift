@@ -264,6 +264,21 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     // by something like an App Intent) then we prefer the most previous main.
     static private(set) weak var lastMain: TerminalController?
 
+    private static func existingWorkspaceWindow(preferredTo explicitParent: NSWindow?) -> NSWindow? {
+        if let explicitParent,
+           explicitParent.windowController is TerminalController {
+            return explicitParent
+        }
+
+        return preferredParent?.window ?? all.compactMap(\.window).first
+    }
+
+    private static func bringWorkspaceWindowForward(_ window: NSWindow) {
+        if window.isMiniaturized { window.deminiaturize(self) }
+        window.makeKeyAndOrderFront(self)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     /// The "new window" action.
     static func newWindow(
         _ ghostty: Ghostty.App,
@@ -273,6 +288,35 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         workspaceID: UUID? = nil,
         workspaceTabID: UUID = UUID()
     ) -> TerminalController {
+        // Ramon's local workspaces branch intentionally has a single top-level
+        // workspace window group. Regular New Window requests become tabs in the
+        // active workspace when a workspace window already exists. Calls with an
+        // explicit workspace group are internal restore/workspace construction
+        // paths and must still be able to build the saved workspace session.
+        if workspaceGroupID == nil {
+            if TerminalController.all.isEmpty,
+               WorkspaceStore.shared.restoreSessionIfAvailable(ghostty: ghostty),
+               let restoredController = preferredParent ?? all.last {
+                return restoredController
+            }
+
+            if let existingWindow = existingWorkspaceWindow(preferredTo: explicitParent),
+               let existingController = existingWindow.windowController as? TerminalController {
+                if let newController = newTab(
+                    ghostty,
+                    from: existingWindow,
+                    withBaseConfig: baseConfig,
+                    workspaceID: workspaceID,
+                    workspaceTabID: workspaceTabID
+                ) {
+                    return newController
+                }
+
+                bringWorkspaceWindowForward(existingWindow)
+                return existingController
+            }
+        }
+
         let c = TerminalController.init(
             ghostty,
             withBaseConfig: baseConfig,
@@ -432,6 +476,63 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         }
 
         return c
+    }
+
+    static func restoreWorkspaceTab(
+        _ ghostty: Ghostty.App,
+        from parent: NSWindow? = nil,
+        withTerminalState terminalState: TerminalRestorableState.InternalState<Ghostty.SurfaceView>,
+        workspaceGroupID: UUID,
+        workspaceID: UUID,
+        workspaceTabID: UUID
+    ) -> TerminalController {
+        let controller = TerminalController.init(
+            ghostty,
+            withSurfaceTree: terminalState.surfaceTree,
+            workspaceGroupID: workspaceGroupID,
+            workspaceID: workspaceID,
+            workspaceTabID: workspaceTabID)
+        controller.titleOverride = terminalState.titleOverride
+
+        guard let window = controller.window else { return controller }
+        if let tabColor = terminalState.tabColor {
+            (window as? TerminalWindow)?.tabColor = tabColor
+        }
+
+        if let parent,
+           let parentController = parent.windowController as? TerminalController,
+           parentController.workspaceGroupID == workspaceGroupID {
+            controller.isBackgroundOpaque = parentController.isBackgroundOpaque
+            if !parent.styleMask.contains(.fullScreen) {
+                window.setFrame(parent.frame, display: false)
+            }
+            if parent.isMiniaturized { parent.deminiaturize(self) }
+            parent.addTabbedWindowSafely(window, ordered: .above)
+        } else if let fullscreenMode = terminalState.effectiveFullscreenMode {
+            switch fullscreenMode {
+            case .native:
+                controller.toggleFullscreen(mode: .native)
+
+            case .nonNative, .nonNativeVisibleMenu, .nonNativePaddedNotch:
+                DispatchQueue.main.async {
+                    controller.toggleFullscreen(mode: fullscreenMode)
+                }
+            }
+        }
+
+        controller.scheduleInitialPresentation {
+            controller.showWindow(self)
+            if parent != nil {
+                window.makeKeyAndOrderFront(self)
+            } else if !window.styleMask.contains(.fullScreen) {
+                let hasFixedPos = controller.derivedConfig.windowPositionX != nil && controller.derivedConfig.windowPositionY != nil
+                Self.applyCascade(to: window, hasFixedPos: hasFixedPos)
+            }
+
+            controller.restorePersistedFocus(to: terminalState.focusedSurface)
+        }
+
+        return controller
     }
 
     static func newTab(
@@ -894,6 +995,31 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // Call this last in case it uses any of the properties above.
         window.syncAppearance(surfaceConfig)
         terminalViewContainer?.ghosttyConfigDidChange(ghostty.config, preferredBackgroundColor: window.preferredBackgroundColor)
+    }
+
+    private func restorePersistedFocus(to focusedSurfaceID: String?, attempts: Int = 0) {
+        let focusTarget: Ghostty.SurfaceView?
+        if let focusedSurfaceID {
+            focusTarget = surfaceTree.first { surface in
+                surface.id.uuidString == focusedSurfaceID
+            }
+        } else {
+            focusTarget = surfaceTree.first
+        }
+
+        guard let focusTarget else { return }
+        focusedSurface = focusTarget
+
+        guard focusTarget.window != nil else {
+            guard attempts <= 40 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(50)) { [weak self, weak focusTarget] in
+                guard let self, let focusTarget else { return }
+                self.restorePersistedFocus(to: focusTarget.id.uuidString, attempts: attempts + 1)
+            }
+            return
+        }
+
+        Ghostty.moveFocus(to: focusTarget, from: nil)
     }
 
     /// Adjusts the given frame for the configured window position.
@@ -1825,6 +1951,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     override func focusedSurfaceDidChange(to: Ghostty.SurfaceView?) {
         super.focusedSurfaceDidChange(to: to)
+        WorkspaceStore.shared.acknowledgeAgentAttention(for: self, focusedSurface: to)
 
         // We always cancel our event listener
         surfaceAppearanceCancellables.removeAll()
