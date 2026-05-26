@@ -39,6 +39,7 @@ final class AgentBridgeStore: ObservableObject {
     static let shared = AgentBridgeStore()
 
     @Published private(set) var statesBySessionID: [String: AgentBridgeState] = [:]
+    @Published private var acknowledgedDoneSessionIDs: Set<String> = []
 
     static var bridgeDirectoryURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -84,6 +85,11 @@ final class AgentBridgeStore: ObservableObject {
             freshStatesBySessionID[state.sessionID] = state
         }
 
+        let freshDoneSessionIDs = Set(freshStatesBySessionID.values
+            .filter { $0.status == "done" }
+            .map(\.sessionID))
+        acknowledgedDoneSessionIDs.formIntersection(freshDoneSessionIDs)
+
         if statesBySessionID != freshStatesBySessionID {
             statesBySessionID = freshStatesBySessionID
         }
@@ -123,24 +129,40 @@ final class AgentBridgeStore: ObservableObject {
             return .working(Self.workingIndicator)
         }
 
-        if states.contains(where: { $0.status == "done" }) {
+        if states.contains(where: { state in
+            state.status == "done" && !isAttentionAcknowledged(state)
+        }) {
             return .attention
         }
 
         return .none
     }
 
+    func isAttentionAcknowledged(_ state: AgentBridgeState) -> Bool {
+        state.status == "done" && acknowledgedDoneSessionIDs.contains(state.sessionID)
+    }
+
     func acknowledgeAttention(forSurfaceID surfaceID: String) {
+        acknowledgeAttention(forSurfaceIDs: [surfaceID])
+    }
+
+    func acknowledgeAttention(forSurfaceIDs surfaceIDs: [String]) {
+        let surfaceIDSet = Set(surfaceIDs.filter { !$0.isEmpty })
+        guard !surfaceIDSet.isEmpty else { return }
+
         var updatedStatesBySessionID = statesBySessionID
+        var updatedAcknowledgedDoneSessionIDs = acknowledgedDoneSessionIDs
         var didUpdateState = false
 
         for fileURL in bridgeFileURLs() where fileURL.pathExtension == "json" {
             guard let data = try? Data(contentsOf: fileURL),
                   var state = try? decoder.decode(AgentBridgeState.self, from: data),
-                  state.ghosttySurfaceID == surfaceID,
+                  let ghosttySurfaceID = state.ghosttySurfaceID,
+                  surfaceIDSet.contains(ghosttySurfaceID),
                   state.status == "done"
             else { continue }
 
+            updatedAcknowledgedDoneSessionIDs.insert(state.sessionID)
             state.status = "idle"
             state.message = nil
             state.updatedAt = dateFormatter.string(from: Date())
@@ -149,6 +171,10 @@ final class AgentBridgeStore: ObservableObject {
             try? updatedData.write(to: fileURL, options: .atomic)
             updatedStatesBySessionID[state.sessionID] = state
             didUpdateState = true
+        }
+
+        if acknowledgedDoneSessionIDs != updatedAcknowledgedDoneSessionIDs {
+            acknowledgedDoneSessionIDs = updatedAcknowledgedDoneSessionIDs
         }
 
         if didUpdateState {

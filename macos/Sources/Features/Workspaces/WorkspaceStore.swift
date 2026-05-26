@@ -243,9 +243,10 @@ final class WorkspaceStore: ObservableObject {
         controllerNeedsAgentAttention.remove(controller.workspaceTabID)
         suppressAgentTitles(for: controller)
 
-        if let surfaceID = focusedSurface?.id.uuidString {
-            AgentBridgeStore.shared.acknowledgeAttention(forSurfaceID: surfaceID)
-        }
+        let surfaceIDs = Set(
+            controller.surfaceTree.map { $0.id.uuidString } +
+                [focusedSurface?.id.uuidString].compactMap { $0 })
+        AgentBridgeStore.shared.acknowledgeAttention(forSurfaceIDs: Array(surfaceIDs))
 
         metadataRevision += 1
     }
@@ -253,16 +254,15 @@ final class WorkspaceStore: ObservableObject {
     func workspaceAgentStatus(in groupID: UUID, workspaceID: UUID) -> WorkspaceAgentStatus {
         var foundAttention = false
         let workspaceControllers = controllers(in: groupID, workspaceID: workspaceID)
+        let bridgeStatus = workspaceStatus(from: agentBridgeStatus(for: workspaceControllers))
 
-        switch workspaceStatus(from: agentBridgeStatus(for: workspaceControllers)) {
-        case .working(let spinner):
-            return .working(spinner)
-        case .attention:
+        if case .attention = bridgeStatus {
             foundAttention = true
-        case .none:
-            break
         }
 
+        // Prefer title-derived working frames when present because Pi animates
+        // progress through terminal title updates. The bridge only tells us that
+        // work is active, so its working indicator is a static fallback.
         for controller in workspaceControllers {
             if controllerNeedsAgentAttention.contains(controller.workspaceTabID) {
                 foundAttention = true
@@ -292,6 +292,10 @@ final class WorkspaceStore: ObservableObject {
                     break
                 }
             }
+        }
+
+        if case .working(let spinner) = bridgeStatus {
+            return .working(spinner)
         }
 
         return foundAttention ? .attention : .none
@@ -576,9 +580,8 @@ final class WorkspaceStore: ObservableObject {
             case .attention:
                 controllerHadWorkingAgent.remove(tabWindowID)
                 if isControllerFocusedForAgentAttention(controller) {
-                    if let surfaceID = controller.focusedSurface?.id.uuidString {
-                        AgentBridgeStore.shared.acknowledgeAttention(forSurfaceID: surfaceID)
-                    }
+                    AgentBridgeStore.shared.acknowledgeAttention(
+                        forSurfaceIDs: controller.surfaceTree.map { $0.id.uuidString })
                     suppressAgentTitles(for: controller)
                 } else {
                     controllerNeedsAgentAttention.insert(tabWindowID)

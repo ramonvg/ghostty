@@ -192,8 +192,14 @@ struct TodoSidebarView: View {
     @StateObject private var model = TodoSidebarModel()
     @ObservedObject private var agentBridgeStore = AgentBridgeStore.shared
     @State private var resizeStartWidth: CGFloat?
+    @State private var workingSpinnerFrameIndex = 0
+
+    private static let workingSpinnerFrames: [String] = [
+        "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
+    ]
 
     private let todoRefreshTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    private let workingSpinnerTimer = Timer.publish(every: 0.12, on: .main, in: .common).autoconnect()
 
     private var width: CGFloat {
         Self.clampedWidth(CGFloat(storedWidth))
@@ -255,6 +261,12 @@ struct TodoSidebarView: View {
         }
         .onReceive(todoRefreshTimer) { _ in
             model.reload(for: cwdURL)
+        }
+        .onReceive(workingSpinnerTimer) { _ in
+            guard visibleTodos.contains(where: { todo in
+                bridgeState(for: todo)?.status == "working"
+            }) else { return }
+            workingSpinnerFrameIndex = (workingSpinnerFrameIndex + 1) % Self.workingSpinnerFrames.count
         }
     }
 
@@ -413,9 +425,12 @@ struct TodoSidebarView: View {
     private func bridgeStatusIcon(_ state: AgentBridgeState) -> String? {
         switch state.status {
         case "working":
-            return "⠿"
+            return Self.workingSpinnerFrames[workingSpinnerFrameIndex]
         case "done":
-            return isFocusedBridgeState(state) ? nil : "🔔"
+            if isFocusedBridgeState(state) || agentBridgeStore.isAttentionAcknowledged(state) {
+                return nil
+            }
+            return "🔔"
         case "waiting":
             return "…"
         default:
