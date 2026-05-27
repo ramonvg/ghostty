@@ -56,7 +56,8 @@ final class WorkspaceStore: ObservableObject {
     private var gitBranchLookupsInFlight: Set<String> = []
     private var agentBridgeCancellable: AnyCancellable?
     private var frameSyncInProgress = false
-    private var workspaceActivationInProgress = false
+    private var workspaceActivationInProgressGroupIDs: Set<UUID> = []
+    private var activeTabRecordingSuppressionTokens: [UUID: UUID] = [:]
 
     private static let loadingSpinnerFrames: Set<Character> = [
         "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
@@ -463,6 +464,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func recordActiveTab(_ controller: TerminalController) {
+        guard activeTabRecordingSuppressionTokens[controller.workspaceGroupID] == nil else { return }
+
         if let window = controller.window,
            let tabGroup = window.tabGroup,
            tabGroup.windows.count > 1,
@@ -803,12 +806,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func syncTabOrder(from windows: [NSWindow]) {
-        guard !workspaceActivationInProgress else { return }
-
         let controllers = windows.compactMap { $0.windowController as? TerminalController }
         guard let firstController = controllers.first else { return }
 
         let groupID = firstController.workspaceGroupID
+        guard !workspaceActivationInProgressGroupIDs.contains(groupID) else { return }
+        guard activeTabRecordingSuppressionTokens[groupID] == nil else { return }
         let workspaceID = firstController.workspaceID
         guard controllers.allSatisfy({ controller in
             controller.workspaceGroupID == groupID && controller.workspaceID == workspaceID
@@ -978,11 +981,15 @@ final class WorkspaceStore: ObservableObject {
         guard group.workspaces.contains(where: { $0.id == workspaceID }) else { return }
 
         let previousWorkspaceID = group.activeWorkspaceID
-        let sourceWindow = selectedController(in: groupID, fallback: source)?.window ?? source?.window
-        if let selectedController = selectedController(in: groupID, fallback: source),
-           selectedController.workspaceID == previousWorkspaceID,
+        let selectedControllerBeforeActivation = selectedController(
+            in: groupID,
+            workspaceID: previousWorkspaceID,
+            fallback: source)
+        let sourceWindow = selectedControllerBeforeActivation?.window ?? source?.window
+        if let selectedControllerBeforeActivation,
            let previousWorkspaceIndex = group.workspaces.firstIndex(where: { $0.id == previousWorkspaceID }) {
-            group.workspaces[previousWorkspaceIndex].activeTabWindowID = selectedController.workspaceTabID
+            group.workspaces[previousWorkspaceIndex].activeTabWindowID =
+                selectedControllerBeforeActivation.workspaceTabID
         }
         groups[groupID] = group
 
@@ -1000,14 +1007,20 @@ final class WorkspaceStore: ObservableObject {
             targetControllers.first { $0.workspaceTabID == tabWindowID }
         } ?? targetControllers[0]
         let activeWindow = activeController.window ?? anchorWindow
+        let activeWorkspaceTabWindowID = activeController.workspaceTabID
 
         let previousWindows = controllers(in: groupID, workspaceID: previousWorkspaceID)
             .compactMap { $0.window }
             .filter { !targetWindows.contains($0) }
 
         let switchingWindows = uniqueWindows(previousWindows + targetWindows + [sourceWindow].compactMap { $0 })
-        workspaceActivationInProgress = true
-        defer { workspaceActivationInProgress = false }
+        let activationToken = UUID()
+        // Removing and re-adding native tabs causes transient key/main-window notifications.
+        // Ignore them so they don't replace the real selected-tab snapshot with AppKit's
+        // temporary selectedWindow (often the last tab in the group).
+        workspaceActivationInProgressGroupIDs.insert(groupID)
+        activeTabRecordingSuppressionTokens[groupID] = activationToken
+        defer { workspaceActivationInProgressGroupIDs.remove(groupID) }
 
         withoutWindowAnimations(switchingWindows) {
             NSAnimationContext.beginGrouping()
@@ -1055,20 +1068,72 @@ final class WorkspaceStore: ObservableObject {
                 previousWindow = window
             }
 
-            activeWindow.tabGroup?.selectedWindow = activeWindow
-            activeWindow.makeKeyAndOrderFront(nil)
+            selectActiveTabWindow(activeWindow)
             NSAnimationContext.endGrouping()
         }
 
         guard var updatedGroup = groups[groupID],
               let workspaceIndex = updatedGroup.workspaces.firstIndex(where: { $0.id == workspaceID })
-        else { return }
+        else {
+            activeTabRecordingSuppressionTokens[groupID] = nil
+            return
+        }
 
         updatedGroup.activeWorkspaceID = workspaceID
-        updatedGroup.workspaces[workspaceIndex].activeTabWindowID = activeController.workspaceTabID
+        updatedGroup.workspaces[workspaceIndex].activeTabWindowID = activeWorkspaceTabWindowID
         groups[groupID] = updatedGroup
 
         activeController.relabelTabs()
+
+        // AppKit can settle NSWindowTabGroup.selectedWindow on the next runloop after
+        // tab reassembly, so reassert the intended tab before accepting focus updates again.
+        DispatchQueue.main.async { [weak self] in
+            self?.finishWorkspaceActivation(
+                workspaceID,
+                in: groupID,
+                activeTabWindowID: activeWorkspaceTabWindowID,
+                activationToken: activationToken)
+        }
+    }
+
+    private func finishWorkspaceActivation(
+        _ workspaceID: UUID,
+        in groupID: UUID,
+        activeTabWindowID: UUID,
+        activationToken: UUID
+    ) {
+        guard activeTabRecordingSuppressionTokens[groupID] == activationToken else { return }
+        guard let activeController = controllersByTabWindowID[activeTabWindowID]?.value,
+              activeController.workspaceGroupID == groupID,
+              activeController.workspaceID == workspaceID,
+              let activeWindow = activeController.window
+        else {
+            activeTabRecordingSuppressionTokens[groupID] = nil
+            return
+        }
+
+        selectActiveTabWindow(activeWindow)
+
+        guard var group = groups[groupID],
+              let workspaceIndex = group.workspaces.firstIndex(where: { $0.id == workspaceID })
+        else {
+            activeTabRecordingSuppressionTokens[groupID] = nil
+            return
+        }
+
+        group.activeWorkspaceID = workspaceID
+        group.workspaces[workspaceIndex].activeTabWindowID = activeTabWindowID
+        groups[groupID] = group
+
+        DispatchQueue.main.async { [weak self] in
+            guard self?.activeTabRecordingSuppressionTokens[groupID] == activationToken else { return }
+            self?.activeTabRecordingSuppressionTokens[groupID] = nil
+        }
+    }
+
+    private func selectActiveTabWindow(_ window: NSWindow) {
+        window.tabGroup?.selectedWindow = window
+        window.makeKeyAndOrderFront(nil)
     }
 
     private func withoutWindowAnimations(_ windows: [NSWindow], _ body: () -> Void) {
@@ -1101,45 +1166,99 @@ final class WorkspaceStore: ObservableObject {
         return result
     }
 
-    private func selectedController(in groupID: UUID, fallback: TerminalController?) -> TerminalController? {
-        if let selectedController = selectedController(fromSelectedTabIn: fallback?.window, groupID: groupID) {
+    private func selectedController(
+        in groupID: UUID,
+        workspaceID: UUID,
+        fallback: TerminalController?
+    ) -> TerminalController? {
+        if let focusedController = focusedController(
+            from: fallback?.window,
+            groupID: groupID,
+            workspaceID: workspaceID) {
+            return focusedController
+        }
+
+        if let focusedController = focusedController(
+            from: NSApp.keyWindow,
+            groupID: groupID,
+            workspaceID: workspaceID) {
+            return focusedController
+        }
+
+        if let focusedController = focusedController(
+            from: NSApp.mainWindow,
+            groupID: groupID,
+            workspaceID: workspaceID) {
+            return focusedController
+        }
+
+        if let selectedController = selectedController(
+            fromSelectedTabIn: fallback?.window,
+            groupID: groupID,
+            workspaceID: workspaceID) {
             return selectedController
         }
 
-        if let selectedController = selectedController(fromSelectedTabIn: NSApp.keyWindow, groupID: groupID) {
+        if let selectedController = selectedController(
+            fromSelectedTabIn: NSApp.keyWindow,
+            groupID: groupID,
+            workspaceID: workspaceID) {
             return selectedController
         }
 
-        if let selectedController = selectedController(fromSelectedTabIn: NSApp.mainWindow, groupID: groupID) {
+        if let selectedController = selectedController(
+            fromSelectedTabIn: NSApp.mainWindow,
+            groupID: groupID,
+            workspaceID: workspaceID) {
             return selectedController
         }
 
-        if let keyWindow = NSApp.keyWindow,
-           let keyController = keyWindow.windowController as? TerminalController,
-           keyController.workspaceGroupID == groupID {
-            return keyController
-        }
+        for controller in controllers(in: groupID, workspaceID: workspaceID) where controller.window?.isVisible == true {
+            if let focusedController = focusedController(
+                from: controller.window,
+                groupID: groupID,
+                workspaceID: workspaceID) {
+                return focusedController
+            }
 
-        if let mainWindow = NSApp.mainWindow,
-           let mainController = mainWindow.windowController as? TerminalController,
-           mainController.workspaceGroupID == groupID {
-            return mainController
-        }
-
-        for controller in controllers(in: groupID) where controller.window?.isVisible == true {
-            if let selectedController = selectedController(fromSelectedTabIn: controller.window, groupID: groupID) {
+            if let selectedController = selectedController(
+                fromSelectedTabIn: controller.window,
+                groupID: groupID,
+                workspaceID: workspaceID) {
                 return selectedController
             }
         }
 
-        guard fallback?.workspaceGroupID == groupID else { return nil }
+        guard fallback?.workspaceGroupID == groupID,
+              fallback?.workspaceID == workspaceID
+        else { return nil }
         return fallback
     }
 
-    private func selectedController(fromSelectedTabIn window: NSWindow?, groupID: UUID) -> TerminalController? {
+    private func focusedController(
+        from window: NSWindow?,
+        groupID: UUID,
+        workspaceID: UUID
+    ) -> TerminalController? {
+        guard let window,
+              window.isKeyWindow || window.isMainWindow || NSApp.keyWindow === window || NSApp.mainWindow === window,
+              let controller = window.windowController as? TerminalController,
+              controller.workspaceGroupID == groupID,
+              controller.workspaceID == workspaceID
+        else { return nil }
+
+        return controller
+    }
+
+    private func selectedController(
+        fromSelectedTabIn window: NSWindow?,
+        groupID: UUID,
+        workspaceID: UUID
+    ) -> TerminalController? {
         guard let selectedWindow = window?.tabGroup?.selectedWindow,
               let selectedController = selectedWindow.windowController as? TerminalController,
-              selectedController.workspaceGroupID == groupID
+              selectedController.workspaceGroupID == groupID,
+              selectedController.workspaceID == workspaceID
         else { return nil }
 
         return selectedController
