@@ -712,6 +712,14 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         WorkspaceStore.shared.moveController(self, to: workspaceID)
     }
 
+    func performTabKeyboardShortcut(with event: NSEvent) -> Bool {
+        guard event.type == .keyDown else { return false }
+        guard !commandPaletteIsShowing else { return false }
+        guard let tabNavigationOffset = Self.tabNavigationOffset(from: event) else { return false }
+
+        return navigateTab(by: tabNavigationOffset)
+    }
+
     func performWorkspaceKeyboardShortcut(with event: NSEvent) -> Bool {
         guard event.type == .keyDown else { return false }
 
@@ -753,6 +761,30 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         let modifiers = event.modifierFlags.intersection([.control, .shift, .option, .command])
         guard modifiers == .control else { return false }
         return event.charactersIgnoringModifiers?.lowercased() == "w" || event.keyCode == 13
+    }
+
+    private func navigateTab(by offset: Int) -> Bool {
+        guard let window,
+              let tabGroup = window.tabGroup,
+              tabGroup.windows.count > 1,
+              let selectedWindow = tabGroup.selectedWindow,
+              let selectedIndex = tabGroup.windows.firstIndex(of: selectedWindow)
+        else { return false }
+
+        let targetIndex = (selectedIndex + offset + tabGroup.windows.count) % tabGroup.windows.count
+        tabGroup.windows[targetIndex].makeKeyAndOrderFront(nil)
+        return true
+    }
+
+    private static func tabNavigationOffset(from event: NSEvent) -> Int? {
+        let modifiers = event.modifierFlags.intersection([.control, .shift, .option, .command])
+        guard modifiers == .control else { return nil }
+
+        switch event.keyCode {
+        case 123: return -1 // Left Arrow
+        case 124: return 1 // Right Arrow
+        default: return nil
+        }
     }
 
     private func navigateWorkspace(by offset: Int) {

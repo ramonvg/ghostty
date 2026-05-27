@@ -573,9 +573,14 @@ class AppDelegate: NSObject,
     }
 
     private func localEventKeyDown(_ event: NSEvent) -> NSEvent? {
-        if let terminalController = NSApp.keyWindow?.windowController as? TerminalController,
-           terminalController.performWorkspaceKeyboardShortcut(with: event) {
-            return nil
+        if let terminalController = NSApp.keyWindow?.windowController as? TerminalController {
+            if terminalController.performTabKeyboardShortcut(with: event) {
+                return nil
+            }
+
+            if terminalController.performWorkspaceKeyboardShortcut(with: event) {
+                return nil
+            }
         }
 
         // If the tab overview is visible and escape is pressed, close it.
