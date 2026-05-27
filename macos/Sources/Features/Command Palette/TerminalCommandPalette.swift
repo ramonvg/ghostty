@@ -145,6 +145,20 @@ struct TerminalCommandPaletteView: View {
             ) {
                 controller.closeActiveWorkspaceCommand()
             },
+            CommandOption(
+                title: SidebarVisibilityStorage.isWorkspaceSidebarVisible ? "Workspace Sidebar: Hide" : "Workspace Sidebar: Show",
+                description: "Toggle workspace sidebar visibility globally across terminal windows",
+                leadingIcon: SidebarVisibilityStorage.isWorkspaceSidebarVisible ? "sidebar.left" : "sidebar.left"
+            ) {
+                SidebarVisibilityStorage.toggleWorkspaceSidebar()
+            },
+            CommandOption(
+                title: SidebarVisibilityStorage.isTodoSidebarVisible ? "Todo Sidebar: Hide" : "Todo Sidebar: Show",
+                description: "Toggle todo sidebar visibility globally across terminal windows",
+                leadingIcon: SidebarVisibilityStorage.isTodoSidebarVisible ? "sidebar.right" : "sidebar.right"
+            ) {
+                SidebarVisibilityStorage.toggleTodoSidebar()
+            },
         ]
 
         let workspaces = WorkspaceStore.shared.workspaces(in: controller.workspaceGroupID)

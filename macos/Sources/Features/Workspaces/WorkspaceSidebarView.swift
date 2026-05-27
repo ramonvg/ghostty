@@ -10,6 +10,7 @@ struct WorkspaceSidebarView: View {
     let activateWorkspace: (UUID) -> Void
     let createWorkspace: () -> Void
     let closeWorkspace: (UUID) -> Void
+    let toggleVisibility: () -> Void
 
     static let defaultWidth: CGFloat = 168
     private static let minWidth: CGFloat = 120
@@ -36,6 +37,15 @@ struct WorkspaceSidebarView: View {
                     .foregroundStyle(.secondary)
 
                 Spacer()
+
+                Button(action: toggleVisibility) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .help("Hide Workspaces")
+                .accessibilityLabel("Hide Workspaces")
 
                 Button(action: createWorkspace) {
                     Image(systemName: "plus")

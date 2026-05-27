@@ -183,6 +183,7 @@ struct TodoSidebarView: View {
 
     let cwdURL: URL?
     let focusedSurface: Ghostty.SurfaceView?
+    let toggleVisibility: () -> Void
 
     static let defaultWidth: CGFloat = 220
     private static let minWidth: CGFloat = 160
@@ -226,6 +227,15 @@ struct TodoSidebarView: View {
                     .foregroundStyle(.secondary)
 
                 Spacer()
+
+                Button(action: toggleVisibility) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .help("Hide Todos")
+                .accessibilityLabel("Hide Todos")
             }
             .padding(.horizontal, 10)
             .padding(.top, 10)

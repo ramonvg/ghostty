@@ -58,6 +58,12 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
     /// The most recently focused surface, equal to `focusedSurface` when it is non-nil.
     @State private var lastFocusedSurface: Weak<Ghostty.SurfaceView>?
 
+#if os(macOS)
+    /// Sidebar visibility is global across terminal windows so workspace/todo layout is predictable.
+    @AppStorage(SidebarVisibilityStorage.workspaceSidebarVisibleKey) private var isWorkspaceSidebarVisible = true
+    @AppStorage(SidebarVisibilityStorage.todoSidebarVisibleKey) private var isTodoSidebarVisible = true
+#endif
+
     // This seems like a crutch after switching from SwiftUI to AppKit lifecycle.
     @FocusState private var focused: Bool
 
@@ -81,19 +87,55 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
            let createWorkspace,
            let closeWorkspace {
             HStack(spacing: 0) {
-                WorkspaceSidebarView(
-                    store: workspaceStore,
-                    groupID: workspaceGroupID,
-                    activateWorkspace: activateWorkspace,
-                    createWorkspace: createWorkspace,
-                    closeWorkspace: closeWorkspace)
+                if isWorkspaceSidebarVisible {
+                    WorkspaceSidebarView(
+                        store: workspaceStore,
+                        groupID: workspaceGroupID,
+                        activateWorkspace: activateWorkspace,
+                        createWorkspace: createWorkspace,
+                        closeWorkspace: closeWorkspace,
+                        toggleVisibility: { isWorkspaceSidebarVisible = false })
+                } else {
+                    CollapsedSidebarButton(
+                        title: "Show Workspaces",
+                        systemImage: "chevron.right",
+                        edge: .leading,
+                        action: { isWorkspaceSidebarVisible = true })
+                }
+
                 terminalSplitTreeView
-                TodoSidebarView(ghostty: ghostty, cwdURL: pwdURL, focusedSurface: lastFocusedSurface?.value)
+
+                if isTodoSidebarVisible {
+                    TodoSidebarView(
+                        ghostty: ghostty,
+                        cwdURL: pwdURL,
+                        focusedSurface: lastFocusedSurface?.value,
+                        toggleVisibility: { isTodoSidebarVisible = false })
+                } else {
+                    CollapsedSidebarButton(
+                        title: "Show Todos",
+                        systemImage: "chevron.left",
+                        edge: .trailing,
+                        action: { isTodoSidebarVisible = true })
+                }
             }
         } else {
             HStack(spacing: 0) {
                 terminalSplitTreeView
-                TodoSidebarView(ghostty: ghostty, cwdURL: pwdURL, focusedSurface: lastFocusedSurface?.value)
+
+                if isTodoSidebarVisible {
+                    TodoSidebarView(
+                        ghostty: ghostty,
+                        cwdURL: pwdURL,
+                        focusedSurface: lastFocusedSurface?.value,
+                        toggleVisibility: { isTodoSidebarVisible = false })
+                } else {
+                    CollapsedSidebarButton(
+                        title: "Show Todos",
+                        systemImage: "chevron.left",
+                        edge: .trailing,
+                        action: { isTodoSidebarVisible = true })
+                }
             }
         }
 #else
@@ -167,6 +209,43 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
         }
     }
 }
+
+#if os(macOS)
+private struct CollapsedSidebarButton: View {
+    enum Edge {
+        case leading
+        case trailing
+    }
+
+    let title: String
+    let systemImage: String
+    let edge: Edge
+    let action: () -> Void
+
+    var body: some View {
+        VStack {
+            Button(action: action) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .help(title)
+            .accessibilityLabel(title)
+            .padding(.top, 10)
+
+            Spacer(minLength: 0)
+        }
+        .frame(width: 28)
+        .background(Color(NSColor.controlBackgroundColor))
+        .overlay(alignment: edge == .leading ? .trailing : .leading) {
+            Rectangle()
+                .fill(Color(NSColor.separatorColor))
+                .frame(width: 1)
+        }
+    }
+}
+#endif
 
 private struct UpdateOverlay: View {
     var body: some View {
