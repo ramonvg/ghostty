@@ -773,6 +773,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
         let targetIndex = (selectedIndex + offset + tabGroup.windows.count) % tabGroup.windows.count
         let targetWindow = tabGroup.windows[targetIndex]
+        tabGroup.selectedWindow = targetWindow
         targetWindow.makeKeyAndOrderFront(nil)
         if let targetController = targetWindow.windowController as? TerminalController {
             WorkspaceStore.shared.recordActiveTab(targetController)
@@ -2132,6 +2133,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
         guard finalIndex >= 0 else { return }
         let targetWindow = tabbedWindows[finalIndex]
+        tabGroup.selectedWindow = targetWindow
         targetWindow.makeKeyAndOrderFront(nil)
         if let targetController = targetWindow.windowController as? TerminalController {
             WorkspaceStore.shared.recordActiveTab(targetController)

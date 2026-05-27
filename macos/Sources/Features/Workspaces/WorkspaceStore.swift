@@ -56,6 +56,7 @@ final class WorkspaceStore: ObservableObject {
     private var gitBranchLookupsInFlight: Set<String> = []
     private var agentBridgeCancellable: AnyCancellable?
     private var frameSyncInProgress = false
+    private var workspaceActivationInProgress = false
 
     private static let loadingSpinnerFrames: Set<Character> = [
         "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
@@ -462,6 +463,13 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func recordActiveTab(_ controller: TerminalController) {
+        if let window = controller.window,
+           let tabGroup = window.tabGroup,
+           tabGroup.windows.count > 1,
+           tabGroup.selectedWindow !== window {
+            return
+        }
+
         guard var group = groups[controller.workspaceGroupID],
               let workspaceIndex = group.workspaces.firstIndex(where: { $0.id == controller.workspaceID })
         else { return }
@@ -795,6 +803,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func syncTabOrder(from windows: [NSWindow]) {
+        guard !workspaceActivationInProgress else { return }
+
         let controllers = windows.compactMap { $0.windowController as? TerminalController }
         guard let firstController = controllers.first else { return }
 
@@ -996,6 +1006,9 @@ final class WorkspaceStore: ObservableObject {
             .filter { !targetWindows.contains($0) }
 
         let switchingWindows = uniqueWindows(previousWindows + targetWindows + [sourceWindow].compactMap { $0 })
+        workspaceActivationInProgress = true
+        defer { workspaceActivationInProgress = false }
+
         withoutWindowAnimations(switchingWindows) {
             NSAnimationContext.beginGrouping()
             NSAnimationContext.current.duration = 0
@@ -1036,10 +1049,13 @@ final class WorkspaceStore: ObservableObject {
             }
             anchorWindow.makeKeyAndOrderFront(nil)
 
+            var previousWindow = anchorWindow
             for window in targetWindows where window !== anchorWindow {
-                anchorWindow.addTabbedWindowSafely(window, ordered: .above)
+                previousWindow.addTabbedWindowSafely(window, ordered: .above)
+                previousWindow = window
             }
 
+            activeWindow.tabGroup?.selectedWindow = activeWindow
             activeWindow.makeKeyAndOrderFront(nil)
             NSAnimationContext.endGrouping()
         }
