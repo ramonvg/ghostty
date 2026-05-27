@@ -1086,9 +1086,15 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func selectedController(in groupID: UUID, fallback: TerminalController?) -> TerminalController? {
-        if let selectedWindow = fallback?.window?.tabGroup?.selectedWindow,
-           let selectedController = selectedWindow.windowController as? TerminalController,
-           selectedController.workspaceGroupID == groupID {
+        if let selectedController = selectedController(fromSelectedTabIn: fallback?.window, groupID: groupID) {
+            return selectedController
+        }
+
+        if let selectedController = selectedController(fromSelectedTabIn: NSApp.keyWindow, groupID: groupID) {
+            return selectedController
+        }
+
+        if let selectedController = selectedController(fromSelectedTabIn: NSApp.mainWindow, groupID: groupID) {
             return selectedController
         }
 
@@ -1098,8 +1104,29 @@ final class WorkspaceStore: ObservableObject {
             return keyController
         }
 
+        if let mainWindow = NSApp.mainWindow,
+           let mainController = mainWindow.windowController as? TerminalController,
+           mainController.workspaceGroupID == groupID {
+            return mainController
+        }
+
+        for controller in controllers(in: groupID) where controller.window?.isVisible == true {
+            if let selectedController = selectedController(fromSelectedTabIn: controller.window, groupID: groupID) {
+                return selectedController
+            }
+        }
+
         guard fallback?.workspaceGroupID == groupID else { return nil }
         return fallback
+    }
+
+    private func selectedController(fromSelectedTabIn window: NSWindow?, groupID: UUID) -> TerminalController? {
+        guard let selectedWindow = window?.tabGroup?.selectedWindow,
+              let selectedController = selectedWindow.windowController as? TerminalController,
+              selectedController.workspaceGroupID == groupID
+        else { return nil }
+
+        return selectedController
     }
 
     private func defaultWorkspaceName(at index: Int) -> String {

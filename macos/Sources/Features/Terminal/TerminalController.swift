@@ -772,7 +772,11 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         else { return false }
 
         let targetIndex = (selectedIndex + offset + tabGroup.windows.count) % tabGroup.windows.count
-        tabGroup.windows[targetIndex].makeKeyAndOrderFront(nil)
+        let targetWindow = tabGroup.windows[targetIndex]
+        targetWindow.makeKeyAndOrderFront(nil)
+        if let targetController = targetWindow.windowController as? TerminalController {
+            WorkspaceStore.shared.recordActiveTab(targetController)
+        }
         return true
     }
 
@@ -2129,6 +2133,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         guard finalIndex >= 0 else { return }
         let targetWindow = tabbedWindows[finalIndex]
         targetWindow.makeKeyAndOrderFront(nil)
+        if let targetController = targetWindow.windowController as? TerminalController {
+            WorkspaceStore.shared.recordActiveTab(targetController)
+        }
     }
 
     @objc private func onCloseTab(notification: SwiftUI.Notification) {
