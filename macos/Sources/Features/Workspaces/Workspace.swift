@@ -6,17 +6,20 @@ struct Workspace: Identifiable, Codable, Equatable {
     var name: String?
     var tabWindowIDs: [UUID]
     var activeTabWindowID: UUID?
+    var color: TerminalTabColor
 
     init(
         id: UUID = UUID(),
         name: String? = nil,
         tabWindowIDs: [UUID] = [],
-        activeTabWindowID: UUID? = nil
+        activeTabWindowID: UUID? = nil,
+        color: TerminalTabColor = .none
     ) {
         self.id = id
         self.name = name
         self.tabWindowIDs = tabWindowIDs
         self.activeTabWindowID = activeTabWindowID
+        self.color = color
     }
 }
 

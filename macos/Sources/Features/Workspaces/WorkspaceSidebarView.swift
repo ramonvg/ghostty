@@ -166,7 +166,14 @@ struct WorkspaceSidebarView: View {
     }
 
     private func workspaceRowContent(_ workspace: Workspace, index: Int, isActive: Bool) -> some View {
-        HStack(spacing: 8) {
+        let workspaceAccentColor = accentColor(for: workspace)
+
+        return HStack(spacing: 8) {
+            Capsule(style: .continuous)
+                .fill(workspaceAccentColor)
+                .frame(width: 3)
+                .opacity(isActive || workspace.color != .none ? 1 : 0)
+
             VStack(alignment: .leading, spacing: 1) {
                 if editingWorkspaceID == workspace.id {
                     TextField("Workspace name", text: $renameDraft)
@@ -194,7 +201,7 @@ struct WorkspaceSidebarView: View {
             if isControlKeyPressed, let shortcutLabel = workspaceShortcutLabel(for: index) {
                 Text(shortcutLabel)
                     .font(.caption2.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(isActive ? workspaceAccentColor : Color.secondary)
                     .frame(minWidth: 16, minHeight: 16)
                     .background {
                         RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -203,13 +210,17 @@ struct WorkspaceSidebarView: View {
             }
         }
         .font(.system(size: 12))
-        .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+        .foregroundStyle(isActive ? workspaceAccentColor : Color.primary)
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .contentShape(Rectangle())
         .background {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isActive ? Color.accentColor.opacity(0.16) : Color.clear)
+                .fill(isActive ? workspaceAccentColor.opacity(0.14) : Color.clear)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(isActive ? workspaceAccentColor.opacity(0.22) : Color.clear, lineWidth: 1)
         }
     }
 
@@ -219,12 +230,41 @@ struct WorkspaceSidebarView: View {
             beginRename(workspace)
         }
 
+        Menu("Color") {
+            ForEach(TerminalTabColor.allCases, id: \.rawValue) { color in
+                Button {
+                    store.setWorkspaceColor(color, for: workspace.id, in: groupID)
+                } label: {
+                    Label {
+                        Text(color.localizedName)
+                    } icon: {
+                        workspaceColorMenuIcon(color, isSelected: color == workspace.color)
+                    }
+                }
+            }
+        }
+
         Button("Close Workspace", role: .destructive) {
             if editingWorkspaceID == workspace.id {
                 cancelRename()
             }
             closeWorkspace(workspace.id)
         }
+    }
+
+    @ViewBuilder
+    private func workspaceColorMenuIcon(_ color: TerminalTabColor, isSelected: Bool) -> some View {
+        if color == .none {
+            Image(systemName: isSelected ? "checkmark.circle" : "circle.slash")
+                .foregroundStyle(.secondary)
+        } else if let displayColor = color.displayColor {
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle.fill")
+                .foregroundStyle(Color(nsColor: displayColor))
+        }
+    }
+
+    private func accentColor(for workspace: Workspace) -> Color {
+        Color(nsColor: workspace.color.displayColor ?? .controlAccentColor)
     }
 
     private func workspaceDisplayName(_ workspace: Workspace) -> String {

@@ -24,6 +24,7 @@ private struct PersistedWorkspace: Codable {
     let name: String?
     let tabs: [PersistedWorkspaceTab]
     let activeTabWindowID: UUID?
+    let color: TerminalTabColor?
 }
 
 private struct PersistedWorkspaceTab: Codable {
@@ -177,6 +178,15 @@ final class WorkspaceStore: ObservableObject {
         guard let workspaceIndex = group.workspaces.firstIndex(where: { $0.id == workspaceID }) else { return }
 
         group.workspaces[workspaceIndex].name = trimmedName
+        groups[groupID] = group
+    }
+
+    func setWorkspaceColor(_ color: TerminalTabColor, for workspaceID: UUID, in groupID: UUID) {
+        guard var group = groups[groupID] else { return }
+        guard let workspaceIndex = group.workspaces.firstIndex(where: { $0.id == workspaceID }) else { return }
+        guard group.workspaces[workspaceIndex].color != color else { return }
+
+        group.workspaces[workspaceIndex].color = color
         groups[groupID] = group
     }
 
@@ -842,7 +852,10 @@ final class WorkspaceStore: ObservableObject {
             groups[persistedGroup.id] = WorkspaceGroup(
                 id: persistedGroup.id,
                 workspaces: persistedGroup.workspaces.enumerated().map { index, workspace in
-                    Workspace(id: workspace.id, name: normalizedPersistedWorkspaceName(workspace.name, at: index))
+                    Workspace(
+                        id: workspace.id,
+                        name: normalizedPersistedWorkspaceName(workspace.name, at: index),
+                        color: workspace.color ?? .none)
                 },
                 activeWorkspaceID: persistedGroup.activeWorkspaceID)
             return true
@@ -921,7 +934,8 @@ final class WorkspaceStore: ObservableObject {
                                         TerminalRestorableState.InternalState(from: controller)
                                     })
                             },
-                            activeTabWindowID: workspace.activeTabWindowID)
+                            activeTabWindowID: workspace.activeTabWindowID,
+                            color: workspace.color == .none ? nil : workspace.color)
                     },
                     activeWorkspaceID: group.activeWorkspaceID)
             }
@@ -943,7 +957,8 @@ final class WorkspaceStore: ObservableObject {
                 id: persistedWorkspace.id,
                 name: normalizedPersistedWorkspaceName(persistedWorkspace.name, at: index),
                 tabWindowIDs: persistedWorkspace.tabs.map(\.id),
-                activeTabWindowID: persistedWorkspace.activeTabWindowID)
+                activeTabWindowID: persistedWorkspace.activeTabWindowID,
+                color: persistedWorkspace.color ?? .none)
         }
         groups[persistedGroup.id] = WorkspaceGroup(
             id: persistedGroup.id,
